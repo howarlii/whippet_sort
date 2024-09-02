@@ -87,7 +87,6 @@ arrow::Status arrow_sorting(const std::string& input_file,
 
   // shared_ptr<arrow::Table> sorted_table = result.table();
 
-  // Write to Parquet Table
   // ARROW_ASSIGN_OR_RAISE(auto outfile,
   //                       arrow::io::FileOutputStream::Open(output_file));
   // PARQUET_THROW_NOT_OK(parquet::arrow::WriteTable(
@@ -98,13 +97,21 @@ arrow::Status arrow_sorting(const std::string& input_file,
 }
 
 void whippet_sorting(const std::string& input_file,
+                     const std::string& output_file,
                      whippet_sort::SortStrategy::SortType sort_type) {
   using namespace whippet_sort;
-  auto sorter =
-      ParquetSorter::create(input_file, "output_whippet.parquet", sort_type);
+  auto sorter = ParquetSorter::create(input_file, output_file, sort_type);
   auto index_list = sorter->sort_column(0);
-  // Avoid compiler to optimize the code
-  index_list[0] = index_list[10];
+  // Prevent compiler to remove the code
+  index_list[0] = index_list[10];  // TODO: DEBUG write function(ZIJIE)
+  if (sort_type == SortStrategy::SortType::INDEX_BASE) {
+    std::cout << "Index length: " << index_list.size() << std::endl;
+  }
+  // auto status = sorter->write(std::move(index_list));
+  // if (!status.ok()) {
+  //   std::cerr << "Failed to write sorted table to output file." << std::endl;
+  //   throw std::runtime_error("Failed to write sorted table to output file.");
+  // }
 }
 
 template <typename Func>
@@ -205,7 +212,7 @@ int main(const int argc, const char* argv[]) {
   auto [whippet_count_median, whippet_count_average] = benchmark(
       [&]() {
         drop_file_cache(input_file);
-        whippet_sorting(input_file,
+        whippet_sorting(input_file, "out_whippet_count.parquet",
                         whippet_sort::SortStrategy::SortType::COUNT_BASE);
       },
       num_runs);
@@ -218,7 +225,7 @@ int main(const int argc, const char* argv[]) {
   auto [whippet_index_median, whippet_index_average] = benchmark(
       [&]() {
         drop_file_cache(input_file);
-        whippet_sorting(input_file,
+        whippet_sorting(input_file, "out_whippet_index.parquet",
                         whippet_sort::SortStrategy::SortType::INDEX_BASE);
       },
       num_runs);
@@ -228,10 +235,13 @@ int main(const int argc, const char* argv[]) {
             << "ms" << std::endl;
 
   // Check correctness
-  // bool is_correct = check_whippet_sort_correctness("output_whippet.parquet",
-  // 0);
-  // std::cout << "Whippet sort correctness: "
-  //           << (is_correct ? "Correct" : "Incorrect") << std::endl;
-
+  // bool count_correct =
+  //     check_whippet_sort_correctness("out_whippet_count.parquet", 0);
+  // std::cout << "Count Base Whippet sort correctness: "
+  //           << (count_correct ? "Correct" : "Incorrect") << std::endl;
+  // bool index_correct =
+  //     check_whippet_sort_correctness("out_whippet_index.parquet", 0);
+  // std::cout << "Index Base Whippet sort correctness: "
+  //           << (index_correct ? "Correct" : "Incorrect") << std::endl;
   return 0;
 }
