@@ -31,6 +31,8 @@
 *.out
 *.app
 
+.cache
+.vscode
 build
 data
 third_party
