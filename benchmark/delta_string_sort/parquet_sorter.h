@@ -95,11 +95,12 @@ public:
 
   virtual ~ParquetSorterArrow() = default;
 
-  void print_column() {
-    LOG(INFO) << "number of rows: " << column_->num_chunks();
-    for (int i = 0; i < column_->num_chunks(); ++i) {
+  void print_column(int num_rows = 3) {
+    LOG(INFO) << "number of num_chunks: " << column_->num_chunks();
+    for (int i = 0; i < num_rows && i < column_->num_chunks(); ++i) {
       auto chunk = column_->chunk(i);
-      LOG(INFO) << "Chunk " << i << ": " << chunk->ToString() << std::endl;
+      LOG(INFO) << "Chunk " << i << " len: " << chunk->length()
+                << ",  data: " << chunk->ToString() << std::endl;
     }
   }
 

@@ -398,7 +398,9 @@ public:
     if (!HasNext()) {
       return 0;
     }
-    return ColumnReaderImplBase<DType>::ReadValues(batch_size, out);
+    auto values_read = ColumnReaderImplBase<DType>::ReadValues(batch_size, out);
+    this->ConsumeBufferedValues(values_read);
+    return values_read;
   }
 };
 } // namespace whippet_sort::hack_parquet
