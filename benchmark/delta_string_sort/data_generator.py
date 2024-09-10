@@ -4,10 +4,10 @@ import pandas as pd
 import numpy as np
 
 # Number of rows
-n_rows = 14
+n_rows = 20000000
 
 # Generate random string lengths centered around 20, between 15 and 25
-string_lengths = np.random.randint(15, 25, size=n_rows)
+string_lengths = np.random.randint(30, 50, size=n_rows)
 
 # Generate a 1D array of random 'a', 'b', 'c' characters, and flatten the array
 total_chars = string_lengths.sum()
@@ -44,7 +44,7 @@ table = pa.Table.from_pandas(df, schema=schema)
 # Write the table to a Parquet file
 pq.write_table(
     table,
-    'input.parquet',
+    'input-big.parquet',
     compression='SNAPPY',  # Optional: Compression
     use_dictionary=False,   # Optional: Use dictionary encoding
     data_page_version='2.0'  # Parquet v2

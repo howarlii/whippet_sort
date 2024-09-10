@@ -1,11 +1,13 @@
-
-
 #pragma once
 
+#include <cerrno>
 #include <cmath>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
+
+#include "hack_encoding.h"
 
 #include <arrow/io/api.h>
 #include <arrow/result.h>
@@ -23,7 +25,7 @@ namespace whippet_sort::hack_parquet {
 
 using namespace parquet;
 
-static bool IsDictionaryIndexEncoding(const Encoding::type &e) {
+inline bool IsDictionaryIndexEncoding(const Encoding::type &e) {
   return e == Encoding::RLE_DICTIONARY || e == Encoding::PLAIN_DICTIONARY;
 }
 
@@ -39,7 +41,7 @@ public:
 
   virtual ~ColumnReaderImplBase() = default;
 
-protected:
+  // protected:
   // Read up to batch_size values from the current data page into the
   // pre-allocated memory T*
   //
@@ -376,11 +378,11 @@ protected:
 };
 
 template <typename DType>
-class TypedColumnReaderImpl : public ColumnReaderImplBase<DType> {
+class TypedColumnReaderSort : public ColumnReaderImplBase<DType> {
 public:
   using T = typename DType::c_type;
 
-  TypedColumnReaderImpl(const ColumnDescriptor *descr,
+  TypedColumnReaderSort(const ColumnDescriptor *descr,
                         std::unique_ptr<PageReader> pager,
                         ::arrow::MemoryPool *pool)
       : ColumnReaderImplBase<DType>(descr, pool) {
@@ -389,12 +391,29 @@ public:
 
   bool HasNext() { return this->HasNextInternal(); }
 
+  void SorteIt() {
+    std::vector<T> real_values;
+    while (HasNext()) {
+      if (this->current_encoding_ == Encoding::DELTA_BYTE_ARRAY) {
+        throw std::runtime_error("not implemented");
+        // just do it()
+      } else {
+        int num_values =
+            std::dynamic_pointer_cast<DataPage>(this->current_page_)
+                ->num_values();
+        real_values.rend(num_values);
+        ReadRealValues(num_values, real_values.data());
+      }
+    }
+  }
+
+  // protected:
   //   using ColumnReaderImplBase<DType>::ReadValues;
   // Read up to batch_size values from the current data page into the
   // pre-allocated memory T*
   //
   // @returns: the number of values read into the out buffer
-  int64_t ReadValues(int64_t batch_size, T *out) {
+  int64_t ReadRealValues(int64_t batch_size, T *out) {
     if (!HasNext()) {
       return 0;
     }

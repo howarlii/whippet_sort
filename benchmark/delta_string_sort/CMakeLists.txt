@@ -19,17 +19,20 @@ find_package(Fmt CONFIG REQUIRED)
 set(CMAKE_CXX_FLAGS_DEBUG "-g -Wall -Wno-mismatched-tags -Wno-deprecated-declarations -Wno-deprecated-this-capture")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -fsanitize=address -march=native -DNDEBUG")
 
-# Define include directories and link directories for the target
-add_executable(benchmark benchmark.cc parquet_sorter.cc)
-target_include_directories(benchmark PRIVATE ${PROJECT_SOURCE_DIR}/../../third_party/install/arrow/include)
-target_link_directories(benchmark PRIVATE ${PROJECT_SOURCE_DIR}/../../third_party/install/arrow/lib)
+option(DEBUG_WITH_ASAN "Enable address sanitizer in debug compile mode" ON)
 
-# Link libraries to the benchmark target
-target_link_libraries(
-  benchmark
-  PRIVATE Arrow::arrow_static
-          Parquet::parquet_static
-          Threads::Threads
-          glog::glog
-          fmt::fmt
-)
+if(DEBUG_WITH_ASAN)
+  set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=address")
+endif()
+
+set(DEPS_INSTALL ${PROJECT_SOURCE_DIR}/../../third_party/install)
+include_directories(SYSTEM ${DEPS_INSTALL}/include)
+link_directories(${DEPS_INSTALL}/lib)
+
+# Setup testing
+enable_testing()
+find_package(GTest CONFIG REQUIRED)
+# add_library(GTest::GTest INTERFACE IMPORTED) target_link_libraries(GTest::GTest INTERFACE gtest_main gtest)
+
+add_subdirectory(src)
+add_subdirectory(test)

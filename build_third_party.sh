@@ -9,12 +9,18 @@ export CXX=clang++
 
 PARALLEL=12 # make parallelism
 CMAKE_GENERATOR=Ninja
-COMMON_CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Release \
-                    -DCMAKE_C_COMPILER=$CC \
-                    -DCMAKE_CXX_COMPILER=$CXX \
-                    -DBUILD_SHARED_LIBS=OFF \
-                    -DCMAKE_CXX_STANDARD=20 \
-                    -DCMAKE_POSITION_INDEPENDENT_CODE=ON"
+COMMON_CMAKE_FLAGS=" \
+  -DCMAKE_INSTALL_PREFIX=${install_dir} \
+  -DCMAKE_PREFIX_PATH=${install_dir} \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER=$CC \
+  -DCMAKE_CXX_COMPILER=$CXX \
+  -DBUILD_SHARED_LIBS=OFF \
+  -DCMAKE_CXX_STANDARD=20 \
+  -DBUILD_TESTING=OFF \
+  -DCMAKE_REQUIRED_INCLUDES=${install_dir}/include \
+  -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+  -G ${CMAKE_GENERATOR} "
 
 # folly
 FOLLY_DOWNLOAD="https://github.com/facebook/folly/archive/refs/tags/v2022.11.14.00.tar.gz"
@@ -24,6 +30,10 @@ FOLLY_SHA256="b249436cb61b6dfd5288093565438d8da642b07ae021191a4042b221bc1bdc0e"
 
 # arrow
 ARROW_VERSION=release-15.0.0-rc0
+
+# GTest
+GTEST_VERSION=v1.15.2
+GTEST_SOURCE="googletest"
 
 check_if_source_exist() {
   if [ -z $1 ]; then
@@ -118,8 +128,30 @@ build_arrow() {
   popd
 }
 
+download_gtest() {
+  mkdir -p $third_party_dir
+  pushd $third_party_dir
+  if [ ! -e googletest ]; then git clone https://github.com/google/googletest.git; fi
+  cd ${GTEST_SOURCE}
+  git checkout ${GTEST_VERSION}
+  popd
+}
+build_gtest() {
+  download_gtest
+  check_if_source_exist ${GTEST_SOURCE}
+  pushd ${third_party_dir}/${GTEST_SOURCE}
+
+  mkdir -p build && cd build
+  cmake -G${CMAKE_GENERATOR} ${COMMON_CMAKE_FLAGS} ..
+  cmake --build . --config Release -- -j $PARALLEL
+  cmake --install .
+
+  popd
+}
+
 all() {
   build_arrow
+  build_gtest
 }
 
 $@

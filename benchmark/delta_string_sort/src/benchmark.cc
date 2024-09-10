@@ -137,7 +137,7 @@ int main(const int argc, const char *argv[]) {
   const int num_runs = 1;
   const uint32_t col_idx = 0;
 
-  std::string input_file = "input.parquet";
+  std::string input_file = "data/input.parquet";
   if (argc > 1) {
     input_file = std::string(argv[1]);
   }
@@ -166,8 +166,9 @@ int main(const int argc, const char *argv[]) {
   auto [whippet_dict_tree_mid, whippet_dict_tree_avg] = benchmark(
       [&]() {
         drop_file_cache(input_file);
+        whippet_sort::ParquetSorterArrow2 sorter2(input_file, col_idx);
+        auto ret = sorter2.sort_by_column();
         whippet_sort::ParquetSorterDictTree sorter(input_file, col_idx);
-        auto ret = sorter.sort_by_column_arrow();
         ret = sorter.sort_by_column();
       },
       num_runs);

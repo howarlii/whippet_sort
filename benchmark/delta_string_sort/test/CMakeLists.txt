@@ -1,0 +1,16 @@
+# Add test cpp file
+add_executable(UnitTests dict_tree_test.cpp)
+target_include_directories(UnitTests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
+# Link test executable against gtest & gtest_main
+target_link_libraries(
+  UnitTests
+  PRIVATE dict_tree_sort
+          Threads::Threads
+          # GTest::gtest_main GTest::gtest
+          gtest
+          gtest_main
+          glog::glog
+          fmt::fmt
+)
+add_test(UnitTests UnitTests)
