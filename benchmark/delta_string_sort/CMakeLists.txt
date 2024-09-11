@@ -19,7 +19,7 @@ find_package(Fmt CONFIG REQUIRED)
 set(CMAKE_CXX_FLAGS_DEBUG "-g -Wall -Wno-mismatched-tags -Wno-deprecated-declarations -Wno-deprecated-this-capture")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -fsanitize=address -march=native -DNDEBUG")
 
-option(DEBUG_WITH_ASAN "Enable address sanitizer in debug compile mode" ON)
+option(DEBUG_WITH_ASAN "Enable address sanitizer in debug compile mode" OFF)
 
 if(DEBUG_WITH_ASAN)
   set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=address")

@@ -20,8 +20,8 @@ namespace dict_tree_internal {
 constexpr static uint8_t kElementBit = 4;
 constexpr static uint8_t kElementNum = 1 << kElementBit;
 constexpr static size_t kTranF = sizeof(char) * 8 / kElementBit;
-constexpr static uint8_t kMask0 = 0x0f;
-constexpr static uint8_t kMask1 = 0xf0;
+constexpr static uint8_t kMask0 = 0xf0;
+constexpr static uint8_t kMask1 = 0x0f;
 
 static_assert(sizeof(char) * 8 % kElementBit == 0, " ");
 
@@ -32,23 +32,29 @@ class SemiStringView {
 public:
   SemiStringView() = default;
   SemiStringView(const std::string_view &str)
-      : str_(str), length_(str_.length() * 2) {}
+      : str_(str), length_(str_.length() * kTranF) {}
 
   SemiStringView(const SemiString &str);
 
   uint8_t operator[](size_t i) const {
+    DCHECK_LT(0, length_);
+    if (i == std::string::npos)
+      i = length_ - 1;
     CHECK_LT(i, length_);
     if (is_first_half_) {
       ++i;
     }
 
-    return (i & 1) ? (str_[i / 2] & kMask1 >> kElementBit)
-                   : (str_[i / 2] & kMask0);
+    return (i & 1) ? ((str_[i / 2] & kMask1))
+                   : ((str_[i / 2] & kMask0) >> kElementBit);
   }
 
   size_t length() const { return length_; }
 
   SemiStringView substr(size_t pos, size_t len) const {
+    if (length_ == 0) {
+      return SemiStringView();
+    }
     CHECK_LE(pos + len, length_);
     if (is_first_half_)
       pos++;
@@ -108,13 +114,17 @@ public:
   SemiString() = default;
 
   uint8_t operator[](size_t i) const {
+    CHECK_GT(length_, 0);
+
+    if (i == std::string::npos)
+      i = length_ - 1;
     CHECK_LT(i, length_);
     if (is_first_half_) {
       ++i;
     }
 
-    return (i & 1) ? (str_[i / 2] & kMask1 >> kElementBit)
-                   : (str_[i / 2] & kMask0);
+    return (i & 1) ? ((str_[i / 2] & kMask1))
+                   : ((str_[i / 2] & kMask0) >> kElementBit);
   }
 
   void set(size_t pos, uint8_t v) {
@@ -122,10 +132,11 @@ public:
       ++pos;
     }
     CHECK_LT(pos, 1 + 2 * str_.size());
+    CHECK_LE(v, kMask1);
     if (pos & 1) {
-      str_[pos / 2] = (str_[pos / 2] & kMask0) | (v << kElementBit);
+      str_[pos / 2] = (str_[pos / 2] & kMask0) | v;
     } else {
-      str_[pos / 2] = (str_[pos / 2] & kMask1) | v;
+      str_[pos / 2] = (str_[pos / 2] & kMask1) | (v << kElementBit);
     }
   }
 
@@ -142,7 +153,7 @@ public:
     CHECK_EQ((is_first_half_ + length_) % 2, v.is_first_half_);
 
     if (v.is_first_half_) {
-      set(length_, v[0] & kMask1 >> kElementBit);
+      set(length_, v[0]);
       str_.append(v.str_.substr(1));
     } else {
       str_.append(v.str_);
@@ -165,7 +176,7 @@ public:
     CHECK(first_elm < kElementNum);
     *ret = std::move(str_);
     if (is_first_half_) {
-      (*ret)[0] = first_elm + ((*ret)[0] & kMask1);
+      (*ret)[0] = (first_elm << kElementBit) + ((*ret)[0] & kMask1);
     }
   }
 
@@ -190,7 +201,6 @@ class DictTreeBuilder {
     std::unique_ptr<Node> children[kElementNum]{nullptr};
     Node *parent{nullptr};
     SemiStringView str; // string on the edge to the parent
-    // size_t length{0};
     size_t pdep{0};
     std::vector<ValueT> values;
   };
@@ -203,6 +213,7 @@ public:
     root_->pdep = 0;
     curr_node_ = root_.get();
     curr_length_ = 0;
+    value_num_ = 0;
   };
 
   /**
@@ -214,6 +225,7 @@ public:
    */
   size_t Insert(size_t prefix_len, const std::string_view &key_in,
                 ValueT value) {
+    ++value_num_;
     str_pool_.emplace_back(key_in);
     SemiStringView key(key_in);
 
@@ -228,10 +240,6 @@ public:
         curr_node_ = curr_node_->parent;
       }
     }
-    if (key_in.length() == 0) {
-      curr_node_->values.push_back(value);
-      return 0;
-    }
 
     size_t key_i = 0;
     while (1) {
@@ -239,22 +247,25 @@ public:
       if (curr_length_ > prefix_len) {
         auto curr_skip_pref_len =
             (prefix_len > curr_node_->pdep) ? prefix_len - curr_node_->pdep : 0;
-        auto same_len = key.substr_tail(key_i).prefix_len(
-            curr_node_->str.substr_tail(curr_skip_pref_len));
+        size_t same_len;
+        if (curr_skip_pref_len) {
+          same_len = key.substr_tail(key_i).prefix_len(
+              curr_node_->str.substr_tail(curr_skip_pref_len));
+        } else {
+          same_len = key.substr_tail(key_i).prefix_len(curr_node_->str);
+        }
 
-        key_i = same_len;
+        key_i += same_len;
         if (curr_skip_pref_len + same_len < curr_node_->str.length()) {
           auto new_node_u = std::make_unique<Node>();
           auto new_node = new_node_u.get();
           new_node->str =
               curr_node_->str.substr(0, curr_skip_pref_len + same_len);
-          // new_node->length = new_node->str.length();
           new_node->parent = curr_node_->parent;
           new_node->pdep = curr_node_->pdep;
 
           curr_node_->str =
               curr_node_->str.substr_tail(curr_skip_pref_len + same_len);
-          // curr_node_->length = curr_node_->str.length();
           curr_node_->parent = new_node;
           curr_node_->pdep += curr_skip_pref_len + same_len;
 
@@ -291,6 +302,8 @@ public:
     DCHECK(false) << "should not reach here";
   }
 
+  auto valueNum() const { return value_num_; }
+
   std::unique_ptr<DictTreePrinter> build();
 
 private:
@@ -298,6 +311,8 @@ private:
 
   Node *curr_node_;
   size_t curr_length_;
+
+  size_t value_num_;
 };
 
 class DictTreePrinter {
@@ -305,7 +320,8 @@ class DictTreePrinter {
 
   using Node = DictTreeBuilder::Node;
 
-  DictTreePrinter(std::unique_ptr<Node> node) : root_(std::move(node)) {
+  DictTreePrinter(std::unique_ptr<Node> node, size_t value_num)
+      : root_(std::move(node)), value_num_(value_num) {
     prefix_stack_.emplace(root_.get(), 0);
   }
 
@@ -330,10 +346,16 @@ public:
         prefix_stack_.emplace(node, 0);
         suf_str.append(node->str);
       } else {
-        prefix_str_.pop_back(node->str.length());
+        // prefix_str_.pop_back(node->str.length());
+        prefix_str_len -= node->str.length();
+
         prefix_stack_.pop();
         if (prefix_stack_.empty())
           return false;
+        last_prefix_semichar_ =
+            prefix_stack_.top().first->str.length()
+                ? prefix_stack_.top().first->str[std::string::npos]
+                : 0;
       }
 
       auto &[node_r, idx_r] = prefix_stack_.top();
@@ -341,22 +363,34 @@ public:
       idx = &idx_r;
     }
 
-    *prefix_len = prefix_str_.length() / kTranF;
-    auto last_elm =
-        prefix_str_.length() ? prefix_str_[prefix_str_.length() - 1] : 0;
-    prefix_str_.append(suf_str);
-    std::move(suf_str).toString(key, last_elm);
+    *prefix_len = prefix_str_len / kTranF;
+
+    // auto qw = prefix_str_.length() ? prefix_str_[prefix_str_.length() - 1] :
+    // 0; CHECK_EQ(qw, last_prefix_semichar_);
+
+    // prefix_str_.append(suf_str);
+    prefix_str_len += suf_str.length();
+
+    auto t = last_prefix_semichar_;
+    if (suf_str.length()) {
+      last_prefix_semichar_ = suf_str[std::string::npos];
+    }
+    std::move(suf_str).toString(key, t);
 
     *values = node->values.back();
     node->values.pop_back();
     return true;
   }
+  auto valueNum() const { return value_num_; }
 
 private:
   std::unique_ptr<Node> root_ = nullptr;
+  size_t value_num_;
 
   std::stack<std::pair<Node *, uint8_t>> prefix_stack_;
-  SemiString prefix_str_;
+  // SemiString prefix_str_;
+  size_t prefix_str_len = 0;
+  uint8_t last_prefix_semichar_ = 0;
 };
 
 } // namespace whippet_sort

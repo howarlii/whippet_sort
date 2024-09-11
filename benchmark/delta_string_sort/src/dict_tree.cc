@@ -27,7 +27,7 @@ SemiStringView::SemiStringView(const SemiString &str) {
 
 std::unique_ptr<DictTreePrinter> DictTreeBuilder::build() {
   return std::unique_ptr<DictTreePrinter>(
-      new DictTreePrinter(std::move(root_)));
+      new DictTreePrinter(std::move(root_), value_num_));
 }
 
 } // namespace whippet_sort

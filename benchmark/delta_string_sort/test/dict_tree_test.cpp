@@ -74,43 +74,76 @@ public:
       last_len = key.size() + prefix_len;
     }
 
-    a_decoded = decodePrefixEecode(a_prefixs, a_prefix_lens, false);
-    std::sort(a_decoded.begin(), a_decoded.end(), std::greater<std::string>());
-    for (int i = 0; i < a_decoded.size(); ++i) {
-      SemiStringView q((std::string_view(a_decoded[i])));
-      for (int j = 0; j < q.length(); ++j) {
-        std::cout << (int)q[j] << " ";
+    LOG(INFO) << "generate data, str_num: " << n
+              << ", str_max_len: " << str_max_len;
+  }
+
+  void stdSort() {
+    auto begin_time = std::chrono::steady_clock::now();
+    a_decoded = decodePrefixEecode(a_prefixs, a_prefix_lens, enable_debug);
+    std::sort(a_decoded.begin(), a_decoded.end(),
+              [](auto &x, auto &y) { return x < y; });
+
+    auto end_time = std::chrono::steady_clock::now() - begin_time;
+    LOG(INFO) << "decode + std::sort time: "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(end_time)
+                     .count()
+              << "ms";
+
+    if (enable_debug) {
+      for (int i = 0; i < a_decoded.size(); ++i) {
+        SemiStringView q((std::string_view(a_decoded[i])));
+        for (int j = 0; j < q.length(); ++j) {
+          std::cout << (int)q[j] << " ";
+        }
+        std::cout << "\n";
       }
-      std::cout << "\n";
+      std::cout << "==================\n";
     }
-    std::cout << "==================\n";
   }
 
   void insertAll() {
+    auto begin_time = std::chrono::steady_clock::now();
     for (int i = 0; i < a_prefixs.size(); ++i) {
       dict_tree.Insert(a_prefix_lens[i], a_prefixs[i], i);
     }
+    auto end_time = std::chrono::steady_clock::now() - begin_time;
+    LOG(INFO) << "insert time: "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(end_time)
+                     .count()
+              << "ms";
   }
 
   void outputIt() {
-
     std::vector<std::string> res_a;
     std::vector<int> res_prefix_lens;
+    res_a.reserve(dict_tree.valueNum());
+    res_prefix_lens.reserve(dict_tree.valueNum());
+
+    auto begin_time = std::chrono::steady_clock::now();
 
     auto t = dict_tree.build();
     while (t->has_next()) {
       size_t prefix_len;
       std::string key;
       int values;
-      t->Next(&prefix_len, &key, &values);
-      res_a.push_back(key);
+      bool ret = t->Next(&prefix_len, &key, &values);
+      if (!ret)
+        break;
+      res_a.emplace_back(std::move(key));
       res_prefix_lens.push_back(prefix_len);
       // std::cout << prefix_len << " " << key << " " << values << std::endl;
     }
-    auto out = decodePrefixEecode(res_a, res_prefix_lens, true);
+    auto end_time = std::chrono::steady_clock::now() - begin_time;
+    LOG(INFO) << "output time: "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(end_time)
+                     .count()
+              << "ms";
+
+    auto out = decodePrefixEecode(res_a, res_prefix_lens, enable_debug);
 
     for (int i = 0; i < out.size(); ++i) {
-      ASSERT_EQ(out[i], a_decoded[i]);
+      ASSERT_EQ(out[i], a_decoded[i]) << "on line: " << i;
     }
   }
 
@@ -155,14 +188,47 @@ protected:
   std::vector<std::string> a_prefixs;
   std::vector<int> a_prefix_lens;
   std::vector<std::string> a_decoded;
+  bool enable_debug = false;
 };
 
 TEST_F(DictTreeTest, t1) {
   this->init(2);
+  // enable_debug = true;
 
   generate(10, 10);
+  stdSort();
   insertAll();
   outputIt();
 }
+
+TEST_F(DictTreeTest, t2) {
+  this->init(8);
+  // enable_debug = true;
+
+  generate(1e6, 50);
+  stdSort();
+  insertAll();
+  outputIt();
+}
+
+TEST_F(DictTreeTest, t3) {
+  this->init(8);
+  // enable_debug = true;
+
+  generate(1e7, 200);
+  stdSort();
+  insertAll();
+  outputIt();
+}
+
+// TEST_F(DictTreeTest, t4) {
+//   this->init(8);
+//   // enable_debug = true;
+
+//   generate(5e7, 200);
+//   stdSort();
+//   insertAll();
+//   outputIt();
+// }
 } // namespace
 } // namespace whippet_sort
