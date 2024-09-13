@@ -1,4 +1,4 @@
-#include "dict_tree.h"
+#include "trie_sort.h"
 
 #include <cerrno>
 #include <cmath>
@@ -13,9 +13,9 @@
 #include <glog/logging.h>
 #include <sys/types.h>
 
-namespace whippet_sort {
+namespace whippet_sort::trie {
 
-namespace dict_tree_internal {
+namespace trie__internal {
 
 SemiStringView::SemiStringView(const SemiString &str) {
   str_ = str.str_;
@@ -23,11 +23,6 @@ SemiStringView::SemiStringView(const SemiString &str) {
   length_ = str.length_;
 }
 
-} // namespace dict_tree_internal
+} // namespace trie__internal
 
-std::unique_ptr<DictTreePrinter> DictTreeBuilder::build() {
-  return std::unique_ptr<DictTreePrinter>(
-      new DictTreePrinter(std::move(root_), value_num_));
-}
-
-} // namespace whippet_sort
+} // namespace whippet_sort::trie

@@ -11,8 +11,9 @@
 #include <unordered_map>
 #include <vector>
 
-#include "hack/hack_column_reader.h"
 #include "parquet_sorter.h"
+#include "trie_sort/hack_column_reader.h"
+#include "trie_sort/trie_sort.h"
 
 #include <arrow/io/api.h>
 #include <arrow/result.h>
@@ -28,36 +29,36 @@ namespace whippet_sort {
 
 typedef uint32_t IndexType;
 
-class ParquetSorterDictTree : public ParquetSorterIf {
+class ParquetSorterTrie : public ParquetSorterIf {
 public:
   // using DType = parquet::ByteArray;
   using DType = parquet::ByteArrayType;
 
-  ParquetSorterDictTree(string input_file, uint32_t col_idx)
+  ParquetSorterTrie(string input_file, uint32_t col_idx)
       : ParquetSorterIf(std::move(input_file), col_idx) {
     open_file();
   }
 
   // Sort the column with the given index and return the sorted index list.
-  arrow::Result<std::shared_ptr<arrow::Array>> sort_by_column() override {
+  std::shared_ptr<arrow::Array> sort_by_column() override {
     if (col_idx_ >= metadata_->num_columns()) {
       LOG(ERROR) << "Column index out of range.";
-      return arrow::Status::Invalid("Column index out of range.");
     }
 
     auto column_descr = metadata_->schema()->Column(col_idx_);
     if (column_descr->physical_type() != DType::type_num) {
       LOG(ERROR) << "Column is not a BYTE_ARRAY column.";
-      return arrow::Status::Invalid("Column is not a BYTE_ARRAY column.");
     }
 
+    std::vector<std::shared_ptr<::arrow::Array>> all_chunks;
+    std::vector<std::unique_ptr<trie::Trie<int>>> tries;
     for (int i = 0; i < metadata_->num_row_groups(); ++i) {
       auto row_group = file_reader_->RowGroup(i);
       auto pager = row_group->GetColumnPageReader(col_idx_);
 
-      auto col_reader =
-          std::make_unique<hack_parquet::TypedColumnReaderSort<DType>>(
-              column_descr, std::move(pager), nullptr);
+      // auto col_reader =
+      // std::make_unique<hack_parquet::ColumnTrieSorter<DType>>(
+      //     column_descr, std::move(pager), nullptr);
 
       // auto tot_num_values = row_group->metadata()->num_rows();
       // std::vector<DType::c_type> values_view(tot_num_values);
@@ -73,10 +74,52 @@ public:
       //   }
       //   values_read += read_num;
       //   CHECK_LE(values_read, tot_num_values);
-      // LOG(INFO) << "Read " << read_num << " values.   " << values_read;
+      //   LOG(INFO) << "Read " << read_num << " values.   " << values_read;
+      // }
+
+      auto col_sorter = std::make_unique<hack_parquet::ColumnTrieSorter<DType>>(
+          column_descr, std::move(pager), nullptr);
+
+      col_sorter->ReadAll();
+      auto chunks = col_sorter->GetChunks();
+      if (chunks.empty()) {
+        tries.emplace_back(col_sorter->GetTrie());
+
+      } else {
+        all_chunks.insert(all_chunks.end(), chunks.begin(), chunks.end());
+      }
     }
 
-    return arrow::Result<std::shared_ptr<arrow::Array>>(nullptr);
+    CHECK(tries.empty() ^ all_chunks.empty());
+
+    if (all_chunks.size()) {
+      auto chunked_array =
+          std::make_shared<::arrow::ChunkedArray>(std::move(all_chunks));
+      arrow::compute::ExecContext exec_ctx_;
+      arrow::compute::SortOptions sort_options;
+      auto ret =
+          arrow::compute::SortIndices(chunked_array, sort_options, &exec_ctx_);
+      if (ret.ok()) {
+        sort_index_ = ret.ValueOrDie();
+      } else {
+        LOG(ERROR) << ret.status().message();
+      }
+    } else {
+      CHECK(false) << " Not implemented yet.";
+    }
+
+    return sort_index_;
+  }
+
+  arrow::Status reorder_result() override {
+    std::shared_ptr<arrow::Table> table;
+    ARROW_RETURN_NOT_OK(reader_->ReadTable(&table));
+    arrow::compute::TakeOptions take_options;
+    ARROW_ASSIGN_OR_RAISE(
+        auto ret,
+        arrow::compute::Take(table, sort_index_, take_options, &exec_ctx_));
+    sorted_table_ = ret.table();
+    return arrow::Status::OK();
   }
 
 protected:
@@ -94,23 +137,23 @@ protected:
 
   unique_ptr<parquet::ParquetFileReader> file_reader_;
   shared_ptr<parquet::FileMetaData> metadata_;
+
+  std::shared_ptr<arrow::Table> sorted_table_;
 };
 
-class ParquetSorterArrow2 : public ParquetSorterDictTree {
+class ParquetSorterArrow2 : public ParquetSorterTrie {
 public:
   ParquetSorterArrow2(string input_file, uint32_t col_idx)
-      : ParquetSorterDictTree(std::move(input_file), col_idx) {}
+      : ParquetSorterTrie(std::move(input_file), col_idx) {}
 
-  arrow::Result<std::shared_ptr<arrow::Array>> sort_by_column() override {
+  std::shared_ptr<arrow::Array> sort_by_column() override {
     if (col_idx_ >= metadata_->num_columns()) {
       LOG(ERROR) << "Column index out of range.";
-      return arrow::Status::Invalid("Column index out of range.");
     }
 
     auto column_descr = metadata_->schema()->Column(col_idx_);
     if (column_descr->physical_type() != DType::type_num) {
       LOG(ERROR) << "Column is not a BYTE_ARRAY column.";
-      return arrow::Status::Invalid("Column is not a BYTE_ARRAY column.");
     }
 
     for (int i = 0; i < metadata_->num_row_groups(); ++i) {
@@ -150,7 +193,7 @@ public:
       }
       LOG(INFO) << "==========> hash: " << hash;
     }
-    return arrow::Result<std::shared_ptr<arrow::Array>>(nullptr);
+    return nullptr;
   }
 };
 

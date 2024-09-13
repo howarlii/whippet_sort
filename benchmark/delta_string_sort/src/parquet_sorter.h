@@ -10,6 +10,8 @@
 #include <vector>
 
 #include <arrow/array/array_base.h>
+#include <arrow/array/array_binary.h>
+#include <arrow/compute/api.h>
 #include <arrow/compute/api_vector.h>
 #include <arrow/compute/exec.h>
 #include <arrow/io/api.h>
@@ -21,6 +23,8 @@
 #include <parquet/column_reader.h>
 #include <parquet/encoding.h>
 #include <parquet/file_reader.h>
+
+#include "utils.h"
 
 namespace whippet_sort {
 using std::deque;
@@ -42,7 +46,7 @@ public:
   ParquetSorterIf &operator=(const ParquetSorterIf &) = delete;
 
   // Sort the column with the given index and return the sorted index list.
-  virtual arrow::Result<std::shared_ptr<arrow::Array>> sort_by_column() = 0;
+  virtual std::shared_ptr<arrow::Array> sort_by_column() = 0;
 
   auto &get_sort_index() const { return sort_index_; }
 
@@ -55,6 +59,11 @@ public:
   virtual arrow::Status write(const std::string &output_file) {
     throw std::runtime_error("Not implemented yet.");
     return arrow::Status::OK();
+  }
+
+  virtual size_t compute_hash() {
+    throw std::runtime_error("Not implemented yet.");
+    return 0;
   }
 
 protected:
@@ -105,7 +114,7 @@ public:
   }
 
   // Sort the column with the given index and return the sorted index list.
-  arrow::Result<std::shared_ptr<arrow::Array>> sort_by_column() override;
+  std::shared_ptr<arrow::Array> sort_by_column() override;
 
   arrow::Status reorder_result() override {
     std::shared_ptr<arrow::Table> table;
@@ -116,6 +125,31 @@ public:
         arrow::compute::Take(table, sort_index_, take_options, &exec_ctx_));
     sorted_table_ = ret.table();
     return arrow::Status::OK();
+  }
+
+  // calc the hash of sorted_table_
+  size_t compute_hash() override {
+    auto chunked_array = sorted_table_->column(col_idx_);
+    std::size_t final_hash = 0;
+    for (int i = 0; i < chunked_array->num_chunks(); ++i) {
+      std::shared_ptr<arrow::Array> chunk = chunked_array->chunk(i);
+
+      // Hash the current chunk (use compute API or your own logic)
+
+      if (chunk->type_id() == arrow::Type::STRING) {
+        std::shared_ptr<arrow::StringArray> array =
+            std::static_pointer_cast<arrow::StringArray>(chunk);
+        for (int64_t j = 0; j < array->length(); ++j) {
+          if (!array->IsNull(j)) {
+            final_hash = Utils::hashCombine(final_hash, array->Value(j));
+          } else {
+            LOG(ERROR) << "Null value found in the column.";
+            final_hash = Utils::hashCombine(final_hash, 0); // Handle null as 0
+          }
+        }
+      }
+    }
+    return final_hash;
   }
 
   // arrow::Status write(const std::string &output_file) override;

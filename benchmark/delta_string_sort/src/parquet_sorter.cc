@@ -24,19 +24,17 @@
 
 namespace whippet_sort {
 
-arrow::Result<std::shared_ptr<arrow::Array>>
-ParquetSorterArrow::sort_by_column() {
+std::shared_ptr<arrow::Array> ParquetSorterArrow::sort_by_column() {
   // Sort the column
   arrow::compute::SortOptions sort_options;
   auto ret = arrow::compute::SortIndices(column_, sort_options, &exec_ctx_);
-
   if (ret.ok()) {
     sort_index_ = ret.ValueOrDie();
   } else {
-    LOG(WARNING) << "Failed to sort column " << col_idx_;
+    LOG(ERROR) << ret.status().message();
   }
 
-  return ret;
+  return sort_index_;
 }
 
 } // namespace whippet_sort

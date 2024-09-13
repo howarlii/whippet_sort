@@ -1,11 +1,12 @@
 #include <functional>
+#include <memory>
 #include <random>
 
-#include "dict_tree.h"
+#include "trie_sort/trie_sort.h"
 
 #include "gtest/gtest.h"
 
-namespace whippet_sort {
+namespace whippet_sort::trie {
 namespace {
 
 TEST(SemiStringTest, t1) {
@@ -45,7 +46,7 @@ TEST(SemiStringTest, t1) {
   }
 }
 
-class DictTreeTest : public ::testing::Test {
+class TrieTest : public ::testing::Test {
 public:
   void init(uint8_t lmt) {
     characters.clear();
@@ -105,7 +106,7 @@ public:
   void insertAll() {
     auto begin_time = std::chrono::steady_clock::now();
     for (int i = 0; i < a_prefixs.size(); ++i) {
-      dict_tree.Insert(a_prefix_lens[i], a_prefixs[i], i);
+      trie_.Insert(a_prefix_lens[i], a_prefixs[i], i);
     }
     auto end_time = std::chrono::steady_clock::now() - begin_time;
     LOG(INFO) << "insert time: "
@@ -117,17 +118,18 @@ public:
   void outputIt() {
     std::vector<std::string> res_a;
     std::vector<int> res_prefix_lens;
-    res_a.reserve(dict_tree.valueNum());
-    res_prefix_lens.reserve(dict_tree.valueNum());
+    res_a.reserve(trie_.valueNum());
+    res_prefix_lens.reserve(trie_.valueNum());
 
     auto begin_time = std::chrono::steady_clock::now();
 
-    auto t = dict_tree.build();
-    while (t->has_next()) {
+    trie__printer = std::make_unique<TriePrinter>(trie_.build());
+
+    while (trie__printer->has_next()) {
       size_t prefix_len;
       std::string key;
       int values;
-      bool ret = t->Next(&prefix_len, &key, &values);
+      bool ret = trie__printer->Next(&prefix_len, &key, &values);
       if (!ret)
         break;
       res_a.emplace_back(std::move(key));
@@ -182,7 +184,8 @@ protected:
   }
 
   // put in any custom data members that you need
-  DictTreeBuilder dict_tree;
+  DictTreeBuilder trie_;
+  std::unique_ptr<TriePrinter> trie__printer;
 
   std::string characters;
   std::vector<std::string> a_prefixs;
@@ -191,7 +194,7 @@ protected:
   bool enable_debug = false;
 };
 
-TEST_F(DictTreeTest, t1) {
+TEST_F(TrieTest, t1) {
   this->init(2);
   // enable_debug = true;
 
@@ -201,7 +204,7 @@ TEST_F(DictTreeTest, t1) {
   outputIt();
 }
 
-TEST_F(DictTreeTest, t2) {
+TEST_F(TrieTest, t2) {
   this->init(8);
   // enable_debug = true;
 
@@ -211,7 +214,7 @@ TEST_F(DictTreeTest, t2) {
   outputIt();
 }
 
-TEST_F(DictTreeTest, t3) {
+TEST_F(TrieTest, t3) {
   this->init(8);
   // enable_debug = true;
 
@@ -221,14 +224,14 @@ TEST_F(DictTreeTest, t3) {
   outputIt();
 }
 
-// TEST_F(DictTreeTest, t4) {
-//   this->init(8);
-//   // enable_debug = true;
+TEST_F(TrieTest, t4) {
+  this->init(8);
+  // enable_debug = true;
 
-//   generate(5e7, 200);
-//   stdSort();
-//   insertAll();
-//   outputIt();
-// }
+  generate(5e7, 200);
+  stdSort();
+  insertAll();
+  outputIt();
+}
 } // namespace
-} // namespace whippet_sort
+} // namespace whippet_sort::trie

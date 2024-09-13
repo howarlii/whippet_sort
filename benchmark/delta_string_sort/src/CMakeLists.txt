@@ -1,5 +1,12 @@
-add_library(dict_tree_sort dict_tree.cc dict_tree.h)
-target_link_libraries(dict_tree_sort PRIVATE glog::glog fmt::fmt)
+add_subdirectory(trie_sort)
+
+add_library(parquet_sorter parquet_sorter.cc)
+target_link_libraries(
+  parquet_sorter
+  trie_sort_encode
+  glog::glog
+  fmt::fmt
+)
 
 # Define include directories and link directories for the target
 add_executable(benchmark benchmark.cc parquet_sorter.cc)

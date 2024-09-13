@@ -1,11 +1,12 @@
 # Add test cpp file
-add_executable(UnitTests dict_tree_test.cpp)
+add_executable(UnitTests parquet_sort.cpp trie_test.cpp)
 target_include_directories(UnitTests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 # Link test executable against gtest & gtest_main
 target_link_libraries(
   UnitTests
-  PRIVATE dict_tree_sort
+  PRIVATE trie_sort
+          parquet_sorter
           Threads::Threads
           # GTest::gtest_main GTest::gtest
           gtest

@@ -31,6 +31,8 @@
 #include <parquet/file_reader.h>
 #include <parquet/types.h>
 
+#include "trie_sort.h"
+
 namespace whippet_sort::hack_parquet {
 
 using namespace parquet;
@@ -324,22 +326,21 @@ private:
 };
 
 // ----------------------------------------------------------------------
-// DeltaByteArraySortDecoder, a hack class for sort
+// DeltaByteArraySortDecoderImpl, a hack class for sort, copy from ARROW
+// src/parquet/encoding.cc:DeltaByteArrayDecoderImpl
 template <typename DType>
-class DeltaByteArraySortDecoder : public DecoderImpl,
-                                  virtual public TypedDecoder<DType> {
+class DeltaByteArraySortDecoderImpl : public DecoderImpl,
+                                      virtual public TypedDecoder<DType> {
   using T = typename DType::c_type;
 
 public:
-  explicit DeltaByteArraySortDecoder(
+  explicit DeltaByteArraySortDecoderImpl(
       const ColumnDescriptor *descr,
       MemoryPool *pool = ::arrow::default_memory_pool())
       : DecoderImpl(descr, Encoding::DELTA_BYTE_ARRAY), pool_(pool),
         prefix_len_decoder_(nullptr, pool),
-        suffix_decoder_(std::make_unique<TypedDecoder<ByteArrayType>>(
-            MakeDecoder(Type::BYTE_ARRAY, Encoding::DELTA_LENGTH_BYTE_ARRAY,
-                        nullptr, pool)
-                .release())),
+        suffix_decoder_(MakeTypedDecoder<ByteArrayType>(
+            Encoding::DELTA_LENGTH_BYTE_ARRAY, nullptr, pool)),
         last_value_in_previous_page_(""),
         buffered_prefix_length_(AllocateBuffer(pool, 0)),
         buffered_data_(AllocateBuffer(pool, 0)) {}
@@ -382,10 +383,7 @@ public:
   int DecodeArrow(int num_values, int null_count, const uint8_t *valid_bits,
                   int64_t valid_bits_offset,
                   typename EncodingTraits<DType>::Accumulator *out) override {
-    int result = 0;
-    PARQUET_THROW_NOT_OK(DecodeArrowDense(num_values, null_count, valid_bits,
-                                          valid_bits_offset, out, &result));
-    return result;
+    ParquetException::NYI("Not implemented for DeltaByteArraySortDecoderImpl");
   }
 
   int DecodeArrow(
@@ -397,46 +395,7 @@ public:
   }
 
 protected:
-  template <bool is_first_run>
-  static void BuildBufferInternal(const int32_t *prefix_len_ptr, int i,
-                                  ByteArray *buffer, std::string_view *prefix,
-                                  uint8_t **data_ptr) {
-    if (ARROW_PREDICT_FALSE(static_cast<size_t>(prefix_len_ptr[i]) >
-                            prefix->length())) {
-      throw ParquetException("prefix length too large in DELTA_BYTE_ARRAY");
-    }
-    // For now, `buffer` points to string suffixes, and the suffix decoder
-    // ensures that the suffix data has sufficient lifetime.
-    if (prefix_len_ptr[i] == 0) {
-      // prefix is empty: buffer[i] already points to the suffix.
-      *prefix = std::string_view{buffer[i]};
-      return;
-    }
-    DCHECK_EQ(is_first_run, i == 0);
-    if constexpr (!is_first_run) {
-      if (buffer[i].len == 0) {
-        // suffix is empty: buffer[i] can simply point to the prefix.
-        // This is not possible for the first run since the prefix
-        // would point to the mutable `last_value_`.
-        *prefix = prefix->substr(0, prefix_len_ptr[i]);
-        buffer[i] = ByteArray(*prefix);
-        return;
-      }
-    }
-    // Both prefix and suffix are non-empty, so we need to decode the string
-    // into `data_ptr`.
-    // 1. Copy the prefix
-    memcpy(*data_ptr, prefix->data(), prefix_len_ptr[i]);
-    // 2. Copy the suffix.
-    memcpy(*data_ptr + prefix_len_ptr[i], buffer[i].ptr, buffer[i].len);
-    // 3. Point buffer[i] to the decoded string.
-    buffer[i].ptr = *data_ptr;
-    buffer[i].len += prefix_len_ptr[i];
-    *data_ptr += buffer[i].len;
-    *prefix = std::string_view{buffer[i]};
-  }
-
-  int GetInternal(ByteArray *buffer, int max_values) {
+  int GetInternal(ByteArray *buffer, int max_values, int idx_offset) {
     // Decode up to `max_values` strings into an internal buffer
     // and reference them into `buffer`.
     max_values = std::min(max_values, num_valid_values_);
@@ -451,46 +410,20 @@ protected:
           std::to_string(max_values) + " from suffix decoder");
     }
 
-    int64_t data_size = 0;
     const int32_t *prefix_len_ptr =
         buffered_prefix_length_->data_as<int32_t>() + prefix_len_offset_;
-    for (int i = 0; i < max_values; ++i) {
-      if (prefix_len_ptr[i] == 0) {
-        // We don't need to copy the suffix if the prefix length is 0.
-        continue;
-      }
-      if (ARROW_PREDICT_FALSE(prefix_len_ptr[i] < 0)) {
-        throw ParquetException("negative prefix length in DELTA_BYTE_ARRAY");
-      }
-      if (buffer[i].len == 0 && i != 0) {
-        // We don't need to copy the prefix if the suffix length is 0
-        // and this is not the first run (that is, the prefix doesn't point
-        // to the mutable `last_value_`).
-        continue;
-      }
-      if (ARROW_PREDICT_FALSE(
-              AddWithOverflow(data_size, prefix_len_ptr[i], &data_size) ||
-              AddWithOverflow(data_size, buffer[i].len, &data_size))) {
-        throw ParquetException("excess expansion in DELTA_BYTE_ARRAY");
-      }
-    }
-    PARQUET_THROW_NOT_OK(buffered_data_->Resize(data_size));
 
-    string_view prefix{last_value_};
-    uint8_t *data_ptr = buffered_data_->mutable_data();
-    if (max_values > 0) {
-      BuildBufferInternal</*is_first_run=*/true>(prefix_len_ptr, 0, buffer,
-                                                 &prefix, &data_ptr);
+    for (int i = 0; i < max_values; ++i) {
+      auto str_view = std::string_view(
+          reinterpret_cast<const char *>(buffer[i].ptr), buffer[i].len);
+      trie_builder_.Insert(prefix_len_ptr[i], std::move(str_view),
+                           idx_offset + i);
     }
-    for (int i = 1; i < max_values; ++i) {
-      BuildBufferInternal</*is_first_run=*/false>(prefix_len_ptr, i, buffer,
-                                                  &prefix, &data_ptr);
-    }
-    DCHECK_EQ(data_ptr - buffered_data_->mutable_data(), data_size);
+
     prefix_len_offset_ += max_values;
     this->num_values_ -= max_values;
     num_valid_values_ -= max_values;
-    last_value_ = std::string{prefix};
+    // last_value_ = std::string{prefix};
 
     if (num_valid_values_ == 0) {
       last_value_in_previous_page_ = last_value_;
@@ -498,42 +431,7 @@ protected:
     return max_values;
   }
 
-  // Status DecodeArrowDense(int num_values, int null_count,
-  //                         const uint8_t *valid_bits, int64_t
-  //                         valid_bits_offset, typename
-  //                         EncodingTraits<DType>::Accumulator *out, int
-  //                         *out_num_values) {
-  //   ArrowBinaryHelper<DType> helper(out, num_values);
-  //   RETURN_NOT_OK(helper.Prepare());
-
-  //   std::vector<ByteArray> values(num_values);
-  //   const int num_valid_values =
-  //       GetInternal(values.data(), num_values - null_count);
-  //   DCHECK_EQ(num_values - null_count, num_valid_values);
-
-  //   auto values_ptr = reinterpret_cast<const ByteArray *>(values.data());
-  //   int value_idx = 0;
-
-  //   RETURN_NOT_OK(VisitNullBitmapInline(
-  //       valid_bits, valid_bits_offset, num_values, null_count,
-  //       [&]() {
-  //         const auto &val = values_ptr[value_idx];
-  //         RETURN_NOT_OK(helper.PrepareNextInput(val.len));
-  //         RETURN_NOT_OK(helper.Append(val.ptr,
-  //         static_cast<int32_t>(val.len)));
-  //         ++value_idx;
-  //         return Status::OK();
-  //       },
-  //       [&]() {
-  //         RETURN_NOT_OK(helper.AppendNull());
-  //         --null_count;
-  //         return Status::OK();
-  //       }));
-
-  //   DCHECK_EQ(null_count, 0);
-  //   *out_num_values = num_valid_values;
-  //   return Status::OK();
-  // }
+  trie::DictTreeBuilder trie_builder_;
 
   MemoryPool *pool_;
 
@@ -549,4 +447,22 @@ private:
   std::shared_ptr<ResizableBuffer> buffered_prefix_length_;
   std::shared_ptr<ResizableBuffer> buffered_data_;
 };
+
+template <typename DType>
+class TrieSortDecoder : public DeltaByteArraySortDecoderImpl<DType> {
+public:
+  using Base = DeltaByteArraySortDecoderImpl<DType>;
+  using Base::DeltaByteArraySortDecoderImpl;
+
+  int Decode(ByteArray *buffer, int max_values) override {
+    throw ParquetException("Not implemented for TrieSortDecoder");
+  }
+
+  int Decode(ByteArray *buffer, int max_values, int idx_offset) {
+    return this->GetInternal(buffer, max_values, idx_offset);
+  }
+
+  auto GetTrie() { return this->trie_builder_.build(); }
+};
+
 } // namespace whippet_sort::hack_parquet

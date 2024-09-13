@@ -5,10 +5,12 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 
 #include "hack_encoding.h"
 
+#include <arrow/array/builder_binary.h>
 #include <arrow/io/api.h>
 #include <arrow/result.h>
 #include <arrow/util/logging.h>
@@ -20,6 +22,7 @@
 #include <parquet/encoding.h>
 #include <parquet/file_reader.h>
 #include <parquet/types.h>
+#include <vector>
 
 namespace whippet_sort::hack_parquet {
 
@@ -378,48 +381,94 @@ public:
 };
 
 template <typename DType>
-class TypedColumnReaderSort : public ColumnReaderImplBase<DType> {
+class ColumnTrieSorter : private ColumnReaderImplBase<DType> {
 public:
   using T = typename DType::c_type;
+  static_assert(std::is_same_v<DType, ByteArrayType>);
 
-  TypedColumnReaderSort(const ColumnDescriptor *descr,
-                        std::unique_ptr<PageReader> pager,
-                        ::arrow::MemoryPool *pool)
-      : ColumnReaderImplBase<DType>(descr, pool) {
+  ColumnTrieSorter(const ColumnDescriptor *descr,
+                   std::unique_ptr<PageReader> pager, ::arrow::MemoryPool *pool)
+      : ColumnReaderImplBase<DType>(descr, pool),
+        trie_sort_decoder_(descr, pool) {
     this->pager_ = std::move(pager);
   }
 
   bool HasNext() { return this->HasNextInternal(); }
 
-  void SorteIt() {
-    std::vector<T> real_values;
+  void ReadAll() {
+    HasNext();
+    first_page_encoding_ = this->current_encoding_;
     while (HasNext()) {
+      int num_values =
+          static_cast<DataPage *>(this->current_page_.get())->num_values();
+
       if (this->current_encoding_ == Encoding::DELTA_BYTE_ARRAY) {
-        throw std::runtime_error("not implemented");
+        ReadValuesToTrie(num_values);
         // just do it()
       } else {
-        int num_values =
-            std::dynamic_pointer_cast<DataPage>(this->current_page_)
-                ->num_values();
-        real_values.rend(num_values);
-        ReadRealValues(num_values, real_values.data());
+        ReadRealValues(num_values);
+      }
+
+      if (this->current_encoding_ != first_page_encoding_) {
+        LOG(ERROR) << "Different encoding in the same column";
       }
     }
   }
 
-  // protected:
-  //   using ColumnReaderImplBase<DType>::ReadValues;
-  // Read up to batch_size values from the current data page into the
-  // pre-allocated memory T*
-  //
-  // @returns: the number of values read into the out buffer
-  int64_t ReadRealValues(int64_t batch_size, T *out) {
-    if (!HasNext()) {
-      return 0;
+  std::vector<std::shared_ptr<::arrow::Array>> GetChunks() {
+    return std::move(chunks_);
+  }
+
+  auto GetTrie() { return trie_sort_decoder_.GetTrie(); }
+
+private:
+  void ConsumeBufferedValues(int64_t num_values) {
+    ColumnReaderImplBase<DType>::ConsumeBufferedValues(num_values);
+    num_read_values_ += num_values;
+  }
+
+  int64_t ReadRealValues(int64_t batch_size) {
+    buffer_.resize(batch_size);
+    auto values_read =
+        ColumnReaderImplBase<DType>::ReadValues(batch_size, buffer_.data());
+    ConsumeBufferedValues(values_read);
+
+    if (!builder_.Reserve(values_read).ok()) {
+      LOG(ERROR) << "Failed to reserve space for values";
+    };
+    for (size_t i = 0; i < values_read; i++) {
+      if (!builder_.Append(buffer_[i].ptr, buffer_[i].len).ok()) {
+        // ... do something on append failure
+        LOG(ERROR) << "Failed to append value";
+      }
     }
-    auto values_read = ColumnReaderImplBase<DType>::ReadValues(batch_size, out);
-    this->ConsumeBufferedValues(values_read);
+
+    std::shared_ptr<::arrow::Array> array;
+    if (!builder_.Finish(&array).ok()) {
+      // ... do something on array building failure
+      LOG(ERROR) << "Failed to build array";
+    }
+    chunks_.emplace_back(std::move(array));
+
     return values_read;
   }
+
+  int64_t ReadValuesToTrie(int64_t batch_size) {
+    buffer_.resize(batch_size);
+    auto values_read =
+        trie_sort_decoder_.Decode(buffer_.data(), batch_size, num_read_values_);
+    ConsumeBufferedValues(values_read);
+
+    return values_read;
+  }
+
+  TrieSortDecoder<DType> trie_sort_decoder_;
+  Encoding::type first_page_encoding_;
+
+  ::arrow::StringBuilder builder_;
+  std::vector<std::shared_ptr<::arrow::Array>> chunks_;
+
+  std::vector<T> buffer_;
+  int64_t num_read_values_{0}; // number of values have read
 };
 } // namespace whippet_sort::hack_parquet
