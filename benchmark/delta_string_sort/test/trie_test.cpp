@@ -125,11 +125,11 @@ public:
 
     trie__printer = std::make_unique<TriePrinter>(trie_.build());
 
-    while (trie__printer->has_next()) {
+    while (trie__printer->hasNext()) {
       size_t prefix_len;
       std::string key;
       int values;
-      bool ret = trie__printer->Next(&prefix_len, &key, &values);
+      bool ret = trie__printer->next(&prefix_len, &key, &values);
       if (!ret)
         break;
       res_a.emplace_back(std::move(key));
@@ -184,7 +184,7 @@ protected:
   }
 
   // put in any custom data members that you need
-  DictTreeBuilder trie_;
+  TrieBuilder trie_;
   std::unique_ptr<TriePrinter> trie__printer;
 
   std::string characters;

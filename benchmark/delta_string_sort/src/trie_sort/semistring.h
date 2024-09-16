@@ -35,8 +35,8 @@ public:
   SemiStringView(const SemiString &str);
 
   uint8_t operator[](size_t i) const {
-    CHECK_GT(length_, 0);
-    CHECK_LT(i, length_);
+    DCHECK_GT(length_, 0);
+    DCHECK_LT(i, length_);
     if (is_first_half_) {
       ++i;
     }
@@ -56,13 +56,13 @@ public:
     if (length_ == 0) {
       return SemiStringView();
     }
-    CHECK_LE(pos + len, length_);
+    DCHECK_LE(pos + len, length_);
     if (is_first_half_)
       pos++;
 
-    auto start = pos / 2;
-    auto end = (pos + len - 1) / 2;
-    CHECK_LT(end, str_.length());
+    auto start = pos >> 1;
+    auto end = (pos + len - 1) >> 1;
+    DCHECK_LT(end, str_.length());
     SemiStringView ret;
     ret.str_ = str_.substr(start, end - start + 1);
     ret.is_first_half_ = pos & 1;

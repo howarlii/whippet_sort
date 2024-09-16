@@ -1,5 +1,9 @@
 #pragma once
 
+#include <arrow/array/array_base.h>
+#include <arrow/array/array_binary.h>
+#include <arrow/array/builder_base.h>
+#include <arrow/chunked_array.h>
 #include <cassert>
 #include <cmath>
 #include <deque>
@@ -50,76 +54,67 @@ public:
       LOG(ERROR) << "Column is not a BYTE_ARRAY column.";
     }
 
-    std::vector<std::shared_ptr<::arrow::Array>> all_chunks;
-    std::vector<std::unique_ptr<trie::Trie<int>>> tries;
+    trie::TrieBuilder trie_builder;
     for (int i = 0; i < metadata_->num_row_groups(); ++i) {
       auto row_group = file_reader_->RowGroup(i);
       auto pager = row_group->GetColumnPageReader(col_idx_);
 
-      // auto col_reader =
-      // std::make_unique<hack_parquet::ColumnTrieSorter<DType>>(
-      //     column_descr, std::move(pager), nullptr);
-
-      // auto tot_num_values = row_group->metadata()->num_rows();
-      // std::vector<DType::c_type> values_view(tot_num_values);
-      // std::vector<std::string> values(tot_num_values);
-      // int64_t values_read = 0;
-      // while (col_reader->HasNext()) {
-      //   auto read_num = col_reader->ReadValues(tot_num_values - values_read,
-      //                                          &values_view[values_read]);
-      //   for (int i = values_read; i < values_read + read_num; ++i) {
-      //     values[i] =
-      //         std::string(reinterpret_cast<const char *>(values_view[i].ptr),
-      //                     values_view[i].len);
-      //   }
-      //   values_read += read_num;
-      //   CHECK_LE(values_read, tot_num_values);
-      //   LOG(INFO) << "Read " << read_num << " values.   " << values_read;
-      // }
-
       auto col_sorter = std::make_unique<hack_parquet::ColumnTrieSorter<DType>>(
           column_descr, std::move(pager), nullptr);
+      col_sorter->SetTrieBuilder(std::move(trie_builder));
 
-      col_sorter->ReadAll();
-      auto chunks = col_sorter->GetChunks();
-      if (chunks.empty()) {
-        tries.emplace_back(col_sorter->GetTrie());
+      col_sorter->ReadAll(metadata_->RowGroup(i)->num_rows());
 
-      } else {
-        all_chunks.insert(all_chunks.end(), chunks.begin(), chunks.end());
-      }
+      trie_builder = std::move(col_sorter->GetTrieBuilder());
+
+      CHECK(col_sorter->GetChunks().empty()) << "???";
     }
-
-    CHECK(tries.empty() ^ all_chunks.empty());
-
-    if (all_chunks.size()) {
-      auto chunked_array =
-          std::make_shared<::arrow::ChunkedArray>(std::move(all_chunks));
-      arrow::compute::ExecContext exec_ctx_;
-      arrow::compute::SortOptions sort_options;
-      auto ret =
-          arrow::compute::SortIndices(chunked_array, sort_options, &exec_ctx_);
-      if (ret.ok()) {
-        sort_index_ = ret.ValueOrDie();
-      } else {
-        LOG(ERROR) << ret.status().message();
-      }
-    } else {
-      CHECK(false) << " Not implemented yet.";
-    }
+    trie_ = trie_builder.build();
 
     return sort_index_;
   }
 
-  arrow::Status reorder_result() override {
-    std::shared_ptr<arrow::Table> table;
-    ARROW_RETURN_NOT_OK(reader_->ReadTable(&table));
-    arrow::compute::TakeOptions take_options;
-    ARROW_ASSIGN_OR_RAISE(
-        auto ret,
-        arrow::compute::Take(table, sort_index_, take_options, &exec_ctx_));
-    sorted_table_ = ret.table();
-    return arrow::Status::OK();
+  void generate_result() override {
+    trie::TriePrinter printer(std::move(trie_));
+    arrow::Int32Builder idx_builder;
+
+    if (auto ret = idx_builder.Reserve(printer.valueNum()); !ret.ok()) {
+      LOG(ERROR) << ret.message();
+    }
+
+    ::arrow::StringBuilder str_builder;
+    if (!str_builder.Reserve(printer.valueNum()).ok()) {
+      LOG(ERROR) << "Failed to reserve space for string builder.";
+    }
+    std::string last_str;
+    while (printer.hasNext()) {
+      size_t prefix_len;
+      std::string key;
+      int values;
+      bool ret = printer.next(&prefix_len, &key, &values);
+      if (!ret)
+        break;
+
+      if (auto ret = idx_builder.Append(values); !ret.ok()) {
+        LOG(ERROR) << ret.message();
+      }
+      last_str = last_str.substr(0, prefix_len) + key;
+      if (auto ret = str_builder.Append(last_str); !ret.ok()) {
+        LOG(ERROR) << ret.message();
+      }
+      // res_a.emplace_back(std::move(key));
+      // res_prefix_lens.push_back(prefix_len);
+      // std::cout << prefix_len << " " << key << " " << values << std::endl;
+    }
+    if (auto ret = idx_builder.Finish(&sort_index_); !ret.ok()) {
+      LOG(ERROR) << ret.message();
+    }
+    std::shared_ptr<arrow::Array> str_array;
+    if (auto ret = str_builder.Finish(&str_array); !ret.ok()) {
+      LOG(ERROR) << ret.message();
+    }
+    sorted_column_ =
+        std::make_shared<::arrow::ChunkedArray>(std::move(str_array));
   }
 
 protected:
@@ -138,15 +133,19 @@ protected:
   unique_ptr<parquet::ParquetFileReader> file_reader_;
   shared_ptr<parquet::FileMetaData> metadata_;
 
-  std::shared_ptr<arrow::Table> sorted_table_;
+  std::unique_ptr<trie::Trie<int>> trie_;
 };
 
-class ParquetSorterArrow2 : public ParquetSorterTrie {
+class ParquetSorterTrieArrow : public ParquetSorterTrie {
 public:
-  ParquetSorterArrow2(string input_file, uint32_t col_idx)
+  // using DType = parquet::ByteArray;
+  using DType = parquet::ByteArrayType;
+
+  ParquetSorterTrieArrow(string input_file, uint32_t col_idx)
       : ParquetSorterTrie(std::move(input_file), col_idx) {}
 
-  std::shared_ptr<arrow::Array> sort_by_column() override {
+  void read_all() {
+    // Sort the column with the given index and return the sorted index list.
     if (col_idx_ >= metadata_->num_columns()) {
       LOG(ERROR) << "Column index out of range.";
     }
@@ -156,45 +155,57 @@ public:
       LOG(ERROR) << "Column is not a BYTE_ARRAY column.";
     }
 
+    std::vector<std::shared_ptr<::arrow::Array>> all_chunks;
+
     for (int i = 0; i < metadata_->num_row_groups(); ++i) {
       auto row_group = file_reader_->RowGroup(i);
-      auto string_reader = std::dynamic_pointer_cast<parquet::ByteArrayReader>(
-          row_group->Column(col_idx_));
+      auto pager = row_group->GetColumnPageReader(col_idx_);
 
-      auto tot_num_values = row_group->metadata()->num_rows();
-      std::vector<DType::c_type> values_view(tot_num_values * 2);
-      std::vector<std::string> values(tot_num_values * 2);
+      auto col_sorter = std::make_unique<hack_parquet::ColumnTrieSorter<DType>>(
+          column_descr, std::move(pager), nullptr);
 
-      int64_t values_read = 0;
-      while (string_reader->HasNext()) {
-        int64_t read_num = 0;
-        string_reader->ReadBatch(tot_num_values - values_read, nullptr, nullptr,
-                                 &values_view[values_read], &read_num);
-        for (int i = values_read; i < values_read + read_num; ++i) {
-          values[i] =
-              std::string(reinterpret_cast<const char *>(values_view[i].ptr),
-                          values_view[i].len);
-        }
-        values_read += read_num;
-        CHECK_LE(values_read, tot_num_values);
-        // LOG(INFO) << "Read " << read_num << " values.   " << values_read;
+      col_sorter->ReadAll(metadata_->RowGroup(i)->num_rows());
+
+      auto trie_builder = std::move(col_sorter->GetTrieBuilder());
+      CHECK_EQ(trie_builder.valueNum(), 0) << "???";
+      if (auto chunks = col_sorter->GetChunks(); !chunks.empty()) {
+        all_chunks.insert(all_chunks.end(), chunks.begin(), chunks.end());
       }
-
-      LOG(INFO) << "number of rows: " << values_read;
-      for (int i = 0; i < 3 && i < values_read; ++i) {
-        LOG(INFO) << fmt::format("Value {}: {}", i, values[i]);
-      }
-      CHECK_EQ(values_read, tot_num_values);
-
-      std::size_t hash = std::hash<uint32_t>()(tot_num_values);
-      for (int i = 0; i < tot_num_values; ++i) {
-        hash ^= std::hash<std::string>()(values[i]) + 0x9e3779b9 + (hash << 6) +
-                (hash >> 2);
-      }
-      LOG(INFO) << "==========> hash: " << hash;
     }
-    return nullptr;
+
+    origin_column_ =
+        std::make_shared<::arrow::ChunkedArray>(std::move(all_chunks));
   }
+
+  std::shared_ptr<arrow::Array> sort_by_column() override {
+    arrow::compute::ExecContext exec_ctx_;
+    arrow::compute::SortOptions sort_options;
+    auto ret =
+        arrow::compute::SortIndices(origin_column_, sort_options, &exec_ctx_);
+    if (ret.ok()) {
+      sort_index_ = ret.ValueOrDie();
+    } else {
+      LOG(ERROR) << ret.status().message();
+    }
+
+    return sort_index_;
+  }
+
+  void generate_result() override {
+    if (sort_index_) {
+      arrow::compute::ExecContext exec_ctx;
+      arrow::compute::TakeOptions take_options;
+      auto ret = arrow::compute::Take(origin_column_, sort_index_, take_options,
+                                      &exec_ctx);
+      sorted_column_ = ret.ValueOrDie().chunked_array();
+      return;
+    }
+    // trival all the nodes
+    CHECK(false) << "Sort index is not available.";
+  }
+
+protected:
+  std::shared_ptr<arrow::ChunkedArray> origin_column_;
 };
 
 } // namespace whippet_sort

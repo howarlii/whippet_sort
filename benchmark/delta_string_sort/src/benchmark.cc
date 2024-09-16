@@ -7,6 +7,7 @@
 #include <arrow/result.h>
 #include <arrow/status.h>
 #include <arrow/table.h>
+#include <memory>
 #include <parquet/arrow/reader.h>
 #include <parquet/arrow/writer.h>
 #include <unistd.h>
@@ -32,49 +33,86 @@ using namespace whippet_sort;
 
 int main(const int argc, const char *argv[]) {
   nice(-20);
-  const int num_runs = 1;
-  const uint32_t col_idx = 0;
+  const int num_runs = 5;
+  const uint32_t col_idx = 1;
 
-  std::string input_file = "data/input.parquet";
+  std::string input_file =
+      std::string(PROJECT_SOURCE_DIR) + "/data/input-2e4-40.parquet";
   if (argc > 1) {
     input_file = std::string(argv[1]);
   }
 
-  // Report the number of row groups:
-  // auto sorter = whippet_sort::ParquetSorter::create(
-  //     input_file, "output_file",
-  //     whippet_sort::SortStrategy::SortType::COUNT_BASE);
-  // std::cout << "Number of RowGroups: "
-  //           << sorter->file_reader->metadata()->num_row_groups() <<
-  //           std::endl;
+  {
+    // Benchmark Arrow sorting
+    std::vector<std::function<std::string()>> steps;
+    std::unique_ptr<whippet_sort::ParquetSorterArrow> sorter;
+    steps.push_back([&]() {
+      Utils::drop_file_cache(input_file);
+      sorter = std::make_unique<whippet_sort::ParquetSorterArrow>(input_file,
+                                                                  col_idx);
+      return std::string("read");
+    });
+    steps.push_back([&]() {
+      // sorter.print_column();
+      auto idx_array = sorter->sort_by_column();
+      return std::string("sort");
+    });
+    steps.push_back([&]() {
+      sorter->generate_result();
+      return "generate result";
+    });
+    auto [arrow_median, arrow_average] =
+        Utils::benchmark("Arrow", num_runs, std::move(steps));
 
-  // Benchmark Arrow sorting
-  auto [arrow_median, arrow_average] = Utils::benchmark(
-      [&]() {
-        Utils::drop_file_cache(input_file);
-        whippet_sort::ParquetSorterArrow sorter(input_file, col_idx);
-        sorter.print_column();
-        //  PARQUET_THROW_NOT_OK(sorter.sort_by_column(0));
-      },
-      num_runs);
+    std::cout << "# Arrow sorting - Median: " << arrow_median
+              << "ms, Average: " << arrow_average << "ms" << std::endl;
+  }
 
-  std::cout << "Arrow sorting - Median: " << arrow_median
-            << "ms, Average: " << arrow_average << "ms" << std::endl;
+  {
+    std::vector<std::function<std::string()>> steps;
+    std::unique_ptr<whippet_sort::ParquetSorterTrieArrow> sorter;
+    steps.push_back([&]() {
+      Utils::drop_file_cache(input_file);
+      sorter =
+          std::make_unique<whippet_sort::ParquetSorterTrieArrow>(input_file, 0);
+      sorter->read_all();
+      return "read";
+    });
+    steps.push_back([&]() {
+      auto idx_array = sorter->sort_by_column();
+      return "sort";
+    });
+    steps.push_back([&]() {
+      sorter->generate_result();
+      return "generate result";
+    });
+    auto [arrow_median, arrow_average] =
+        Utils::benchmark("Trie-Arrow", num_runs, std::move(steps));
 
-  auto [whippet_trie__mid, whippet_trie__avg] = Utils::benchmark(
-      [&]() {
-        Utils::drop_file_cache(input_file);
-        whippet_sort::ParquetSorterArrow2 sorter2(input_file, col_idx);
-        auto ret = sorter2.sort_by_column();
-        whippet_sort::ParquetSorterTrie sorter(input_file, col_idx);
-        ret = sorter.sort_by_column();
-      },
-      num_runs);
+    std::cout << "# Whippet sorting (Trie-Arrow) - Median: " << arrow_median
+              << "ms, Average: " << arrow_average << "ms" << std::endl;
+  }
 
-  std::cout << "Whippet sorting (Dictionary Tree) - Median: "
-            << whippet_trie__mid << "ms, Average: " << whippet_trie__avg << "ms"
-            << std::endl;
+  {
+    std::vector<std::function<std::string()>> steps;
+    std::unique_ptr<whippet_sort::ParquetSorterTrie> sorter;
+    steps.push_back([&]() {
+      Utils::drop_file_cache(input_file);
+      sorter = std::make_unique<whippet_sort::ParquetSorterTrie>(input_file,
+                                                                 col_idx);
+      auto idx_array = sorter->sort_by_column();
+      return "read+sort";
+    });
+    steps.push_back([&]() {
+      sorter->generate_result();
+      return "generate result";
+    });
+    auto [median, average] =
+        Utils::benchmark("Trie", num_runs, std::move(steps));
 
+    std::cout << "# Whippet sorting (Trie) - Median: " << median
+              << "ms, Average: " << average << "ms" << std::endl;
+  }
   // Check correctness
   // bool count_correct =
   //     check_whippet_sort_correctness("out_whippet_count.parquet", 0);

@@ -431,7 +431,7 @@ protected:
     return max_values;
   }
 
-  trie::DictTreeBuilder trie_builder_;
+  trie::TrieBuilder trie_builder_;
 
   MemoryPool *pool_;
 
@@ -462,7 +462,11 @@ public:
     return this->GetInternal(buffer, max_values, idx_offset);
   }
 
-  auto GetTrie() { return this->trie_builder_.build(); }
+  void SetTrieBuilder(trie::TrieBuilder &&builder) {
+    this->trie_builder_ = std::move(builder);
+  }
+
+  auto &GetTrieBuilder() { return this->trie_builder_; }
 };
 
 } // namespace whippet_sort::hack_parquet

@@ -388,23 +388,36 @@ public:
 
   ColumnTrieSorter(const ColumnDescriptor *descr,
                    std::unique_ptr<PageReader> pager, ::arrow::MemoryPool *pool)
-      : ColumnReaderImplBase<DType>(descr, pool),
-        trie_sort_decoder_(descr, pool) {
+      : ColumnReaderImplBase<DType>(descr, pool) {
     this->pager_ = std::move(pager);
+
+    auto ptr = std::make_unique<TrieSortDecoder<DType>>(descr, pool);
+    trie_sort_decoder_ = ptr.get();
+    this->decoders_[static_cast<int>(Encoding::DELTA_BYTE_ARRAY)] =
+        std::move(ptr);
+  }
+
+  void SetTrieBuilder(trie::TrieBuilder &&builder) {
+    trie_sort_decoder_->SetTrieBuilder(std::move(builder));
   }
 
   bool HasNext() { return this->HasNextInternal(); }
 
-  void ReadAll() {
+  void ReadAll(int64_t tot_row_num) {
     HasNext();
     first_page_encoding_ = this->current_encoding_;
+    if (first_page_encoding_ != Encoding::DELTA_BYTE_ARRAY) {
+      if (!builder_.Reserve(tot_row_num).ok()) {
+        LOG(ERROR) << "Failed to reserve space for values";
+      };
+    }
     while (HasNext()) {
       int num_values =
           static_cast<DataPage *>(this->current_page_.get())->num_values();
+      DLOG(INFO) << "Reading next page " << num_values;
 
       if (this->current_encoding_ == Encoding::DELTA_BYTE_ARRAY) {
         ReadValuesToTrie(num_values);
-        // just do it()
       } else {
         ReadRealValues(num_values);
       }
@@ -413,13 +426,22 @@ public:
         LOG(ERROR) << "Different encoding in the same column";
       }
     }
+
+    if (builder_.length()) {
+      std::shared_ptr<::arrow::Array> array;
+      if (!builder_.Finish(&array).ok()) {
+        // ... do something on array building failure
+        LOG(ERROR) << "Failed to build array";
+      }
+      chunks_.emplace_back(std::move(array));
+    }
   }
 
   std::vector<std::shared_ptr<::arrow::Array>> GetChunks() {
     return std::move(chunks_);
   }
 
-  auto GetTrie() { return trie_sort_decoder_.GetTrie(); }
+  auto &GetTrieBuilder() { return trie_sort_decoder_->GetTrieBuilder(); }
 
 private:
   void ConsumeBufferedValues(int64_t num_values) {
@@ -433,9 +455,6 @@ private:
         ColumnReaderImplBase<DType>::ReadValues(batch_size, buffer_.data());
     ConsumeBufferedValues(values_read);
 
-    if (!builder_.Reserve(values_read).ok()) {
-      LOG(ERROR) << "Failed to reserve space for values";
-    };
     for (size_t i = 0; i < values_read; i++) {
       if (!builder_.Append(buffer_[i].ptr, buffer_[i].len).ok()) {
         // ... do something on append failure
@@ -443,26 +462,19 @@ private:
       }
     }
 
-    std::shared_ptr<::arrow::Array> array;
-    if (!builder_.Finish(&array).ok()) {
-      // ... do something on array building failure
-      LOG(ERROR) << "Failed to build array";
-    }
-    chunks_.emplace_back(std::move(array));
-
     return values_read;
   }
 
   int64_t ReadValuesToTrie(int64_t batch_size) {
     buffer_.resize(batch_size);
-    auto values_read =
-        trie_sort_decoder_.Decode(buffer_.data(), batch_size, num_read_values_);
+    auto values_read = trie_sort_decoder_->Decode(buffer_.data(), batch_size,
+                                                  num_read_values_);
     ConsumeBufferedValues(values_read);
 
     return values_read;
   }
 
-  TrieSortDecoder<DType> trie_sort_decoder_;
+  TrieSortDecoder<DType> *trie_sort_decoder_;
   Encoding::type first_page_encoding_;
 
   ::arrow::StringBuilder builder_;

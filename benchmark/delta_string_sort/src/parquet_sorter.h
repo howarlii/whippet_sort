@@ -50,9 +50,8 @@ public:
 
   auto &get_sort_index() const { return sort_index_; }
 
-  virtual arrow::Status reorder_result() {
+  virtual void generate_result() {
     throw std::runtime_error("Not implemented yet.");
-    return arrow::Status::OK();
   }
 
   // Write the sorted table to the output file using index list
@@ -61,9 +60,28 @@ public:
     return arrow::Status::OK();
   }
 
+  // calc the hash of sorted_table_
   virtual size_t compute_hash() {
-    throw std::runtime_error("Not implemented yet.");
-    return 0;
+    CHECK(sorted_column_ != nullptr) << "No sorted column found.";
+    std::size_t final_hash = 0;
+    for (int i = 0; i < sorted_column_->num_chunks(); ++i) {
+      std::shared_ptr<arrow::Array> chunk = sorted_column_->chunk(i);
+
+      // Hash the current chunk (use compute API or your own logic)
+      if (chunk->type_id() == arrow::Type::STRING) {
+        std::shared_ptr<arrow::StringArray> array =
+            std::static_pointer_cast<arrow::StringArray>(chunk);
+        for (int64_t j = 0; j < array->length(); ++j) {
+          if (!array->IsNull(j)) {
+            final_hash = Utils::hashCombine(final_hash, array->Value(j));
+          } else {
+            LOG(ERROR) << "Null value found in the column.";
+            final_hash = Utils::hashCombine(final_hash, 0); // Handle null as 0
+          }
+        }
+      }
+    }
+    return final_hash;
   }
 
 protected:
@@ -91,6 +109,7 @@ protected:
   string input_file_;
   uint32_t col_idx_;
   std::shared_ptr<arrow::Array> sort_index_;
+  std::shared_ptr<arrow::ChunkedArray> sorted_column_;
 };
 
 class ParquetSorterArrow : public ParquetSorterIf {
@@ -116,43 +135,20 @@ public:
   // Sort the column with the given index and return the sorted index list.
   std::shared_ptr<arrow::Array> sort_by_column() override;
 
-  arrow::Status reorder_result() override {
+  void generate_result() override {
     std::shared_ptr<arrow::Table> table;
-    ARROW_RETURN_NOT_OK(reader_->ReadTable(&table));
-    arrow::compute::TakeOptions take_options;
-    ARROW_ASSIGN_OR_RAISE(
-        auto ret,
-        arrow::compute::Take(table, sort_index_, take_options, &exec_ctx_));
-    sorted_table_ = ret.table();
-    return arrow::Status::OK();
-  }
-
-  // calc the hash of sorted_table_
-  size_t compute_hash() override {
-    auto chunked_array = sorted_table_->column(col_idx_);
-    std::size_t final_hash = 0;
-    for (int i = 0; i < chunked_array->num_chunks(); ++i) {
-      std::shared_ptr<arrow::Array> chunk = chunked_array->chunk(i);
-
-      // Hash the current chunk (use compute API or your own logic)
-
-      if (chunk->type_id() == arrow::Type::STRING) {
-        std::shared_ptr<arrow::StringArray> array =
-            std::static_pointer_cast<arrow::StringArray>(chunk);
-        for (int64_t j = 0; j < array->length(); ++j) {
-          if (!array->IsNull(j)) {
-            final_hash = Utils::hashCombine(final_hash, array->Value(j));
-          } else {
-            LOG(ERROR) << "Null value found in the column.";
-            final_hash = Utils::hashCombine(final_hash, 0); // Handle null as 0
-          }
-        }
-      }
+    if (!reader_->ReadTable(&table).ok()) {
+      CHECK(false) << "Failed to read table";
     }
-    return final_hash;
-  }
+    arrow::compute::TakeOptions take_options;
 
-  // arrow::Status write(const std::string &output_file) override;
+    auto to_sort_col = table->column(col_idx_);
+    auto ret = arrow::compute::Take(to_sort_col, sort_index_, take_options,
+                                    &exec_ctx_);
+
+    sorted_column_ = ret.ValueOrDie().chunked_array();
+    // sorted_column_ = sorted_table_->column(col_idx_);
+  }
 
 private:
   arrow::Status open_file() {

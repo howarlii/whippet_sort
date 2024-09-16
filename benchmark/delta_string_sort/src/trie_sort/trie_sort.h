@@ -37,14 +37,14 @@ template <typename ValueT> struct Trie {
 
 class TriePrinter;
 
-class DictTreeBuilder {
+class TrieBuilder {
   using ValueT = int;
 
   using Node = Trie<ValueT>::Node;
   friend class TriePrinter;
 
 public:
-  DictTreeBuilder() : trie_(std::make_unique<Trie<ValueT>>()) { reset(); };
+  TrieBuilder() : trie_(std::make_unique<Trie<ValueT>>()) { reset(); };
 
   /**
    * @brief Insert a key into the tree
@@ -56,8 +56,8 @@ public:
   size_t Insert(size_t prefix_len, const std::string_view &key_in,
                 ValueT value) {
     ++trie_->value_num_;
-    trie_->str_pool_.emplace_back(key_in);
-    SemiStringView key(key_in);
+    const auto &str = trie_->str_pool_.emplace_back(key_in);
+    SemiStringView key(str);
 
     prefix_len *= kTranF;
     CHECK_LE(prefix_len, curr_length_)
@@ -161,19 +161,19 @@ private:
 class TriePrinter {
   using ValueT = int;
 
-  friend class DictTreeBuilder;
+  friend class TrieBuilder;
 
-  using Node = DictTreeBuilder::Node;
+  using Node = Trie<ValueT>::Node;
 
 public:
   TriePrinter(std::unique_ptr<Trie<ValueT>> &&trie) : trie_(std::move(trie)) {
     prefix_stack_.emplace(trie_->root_.get(), 0);
   }
 
-  bool has_next() const { return !prefix_stack_.empty(); }
+  bool hasNext() const { return !prefix_stack_.empty(); }
 
-  bool Next(size_t *prefix_len, std::string *key, int *values) {
-    if (!has_next())
+  bool next(size_t *prefix_len, std::string *key, int *values) {
+    if (!hasNext())
       return false;
 
     auto &[node_r, idx_r] = prefix_stack_.top();
@@ -234,5 +234,88 @@ private:
   size_t prefix_str_len = 0;
   uint8_t last_prefix_semichar_ = 0;
 };
+
+// class MultiTriePrinter {
+//   using ValueT = int;
+
+//   friend class DictTreeBuilder;
+
+//   using Node = Trie<ValueT>::Node;
+
+// public:
+//   MultiTriePrinter(std::vector<std::unique_ptr<Trie<ValueT>>> &&tries)
+//       : tries_(std::move(tries)) {
+//         prefix_stack_.emplace()
+//     prefix_stack_.reserve(tries.size());
+//     for (auto &trie : tries) {
+//       prefix_stack_.emplace(trie->root_.get(), 0);
+//     }
+//   }
+
+//   bool has_next() const { return !prefix_stack_.empty(); }
+
+//   bool Next(size_t *prefix_len, std::string *key, int *values) {
+//     if (!has_next())
+//       return false;
+
+//     auto &[node_r, idx_r] = prefix_stack_.top();
+//     Node *node = node_r;
+//     uint8_t *idx = &idx_r;
+
+//     SemiString suf_str;
+//     while (node->values.empty()) {
+//       for (; *idx < kElementNum && node->children[*idx] == nullptr; ++(*idx))
+//         ;
+//       if (*idx < kElementNum) {
+//         node = node->children[*idx].get();
+//         ++(*idx);
+//         prefix_stack_.emplace(node, 0);
+//         suf_str.append(node->str);
+//       } else {
+//         // prefix_str_.pop_back(node->str.length());
+//         prefix_str_len -= node->str.length();
+
+//         prefix_stack_.pop();
+//         if (prefix_stack_.empty())
+//           return false;
+//         last_prefix_semichar_ = prefix_stack_.top().first->str.length()
+//                                     ? prefix_stack_.top().first->str.back()
+//                                     : 0;
+//       }
+
+//       auto &[node_r, idx_r] = prefix_stack_.top();
+//       node = node_r;
+//       idx = &idx_r;
+//     }
+
+//     *prefix_len = prefix_str_len / kTranF;
+
+//     // auto qw = prefix_str_.length() ? prefix_str_[prefix_str_.length() - 1]
+//     :
+//     // 0; CHECK_EQ(qw, last_prefix_semichar_);
+
+//     // prefix_str_.append(suf_str);
+//     prefix_str_len += suf_str.length();
+
+//     auto t = last_prefix_semichar_;
+//     if (suf_str.length()) {
+//       last_prefix_semichar_ = suf_str.back();
+//     }
+//     std::move(suf_str).toString(key, t);
+
+//     *values = node->values.back();
+//     node->values.pop_back();
+//     return true;
+//   }
+//   auto valueNum() const { return trie_->value_num_; }
+
+// private:
+//   std::vector<std::unique_ptr<Trie<ValueT>>> tries_;
+
+//   std::stack<std::pair<std::vector<Node *>, uint8_t>> prefix_stack_;
+//   // SemiString prefix_str_;
+//   size_t prefix_str_len = 0;
+//   uint8_t last_prefix_semichar_ = 0;
+// };
 
 } // namespace whippet_sort::trie

@@ -9,6 +9,8 @@
 #include <arrow/result.h>
 #include <arrow/status.h>
 #include <arrow/table.h>
+#include <fmt/core.h>
+#include <fmt/format.h>
 #include <parquet/arrow/reader.h>
 #include <parquet/arrow/writer.h>
 #include <unistd.h>
@@ -66,29 +68,57 @@ public:
       std::cout << "  This is a string column." << std::endl;
     }
   }
-  static std::pair<double, double> benchmark(std::function<void()> &&func,
-                                             int num_runs) {
-    std::vector<double> durations;
-    durations.reserve(num_runs);
 
-    for (int i = 0; i < num_runs; ++i) {
-      auto start = std::chrono::high_resolution_clock::now();
-      func();
-      auto end = std::chrono::high_resolution_clock::now();
+  static std::pair<double, double>
+  benchmark(const std::string &name, int num_runs,
+            std::vector<std::function<std::string()>> &&steps) {
+    std::vector<std::vector<double>> durations(steps.size(),
+                                               std::vector<double>(num_runs));
+    std::vector<double> tot_durations(num_runs);
+    std::vector<std::string> step_names;
 
-      double duration =
-          std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
-              .count();
-      durations.push_back(duration);
+    for (int round = 0; round < num_runs; ++round) {
+      double tot_duration = 0;
+      for (int step_i = 0; step_i < steps.size(); ++step_i) {
+        auto start = std::chrono::high_resolution_clock::now();
+        auto name = steps[step_i]();
+        auto end = std::chrono::high_resolution_clock::now();
+
+        if (step_names.size() <= step_i) {
+          step_names.push_back(name);
+        }
+        double duration =
+            std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
+                .count();
+        durations[step_i][round] = duration;
+        tot_duration += duration;
+      }
+      tot_durations[round] = tot_duration;
     }
 
+    std::cout << std::endl
+              << fmt::format("step_time_avg[\"{}\"] = {}\n", name, "{");
     // Calculate average
+    for (int step_i = 0; step_i < steps.size(); ++step_i) {
+      double average = std::accumulate(durations[step_i].begin(),
+                                       durations[step_i].end(), 0.0) /
+                       num_runs;
+
+      // Calculate median
+      // std::sort(durations[step_i].begin(), durations[step_i].end());
+      // double median = durations[step_i][num_runs / 2];
+      std::cout << fmt::format("\"{}\": {},", step_names[step_i], average)
+                << std::endl;
+    }
+    std::cout << "}\n";
+
     double average =
-        std::accumulate(durations.begin(), durations.end(), 0.0) / num_runs;
+        std::accumulate(tot_durations.begin(), tot_durations.end(), 0.0) /
+        num_runs;
 
     // Calculate median
-    std::sort(durations.begin(), durations.end());
-    double median = durations[num_runs / 2];
+    std::sort(tot_durations.begin(), tot_durations.end());
+    double median = tot_durations[num_runs / 2];
 
     return {median, average};
   }
