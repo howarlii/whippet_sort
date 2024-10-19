@@ -21,4 +21,5 @@ target_link_libraries(
           Threads::Threads
           glog::glog
           fmt::fmt
+          trie_sort
 )

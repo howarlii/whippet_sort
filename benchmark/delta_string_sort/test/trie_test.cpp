@@ -106,7 +106,7 @@ public:
   void insertAll() {
     auto begin_time = std::chrono::steady_clock::now();
     for (int i = 0; i < a_prefixs.size(); ++i) {
-      trie_.Insert(a_prefix_lens[i], a_prefixs[i], i);
+      trie_.insert(a_prefix_lens[i], a_prefixs[i], i);
     }
     auto end_time = std::chrono::steady_clock::now() - begin_time;
     LOG(INFO) << "insert time: "
@@ -208,7 +208,7 @@ TEST_F(TrieTest, t2) {
   this->init(8);
   // enable_debug = true;
 
-  generate(1e6, 50);
+  generate(1e6, 200);
   stdSort();
   insertAll();
   outputIt();
@@ -218,7 +218,7 @@ TEST_F(TrieTest, t3) {
   this->init(8);
   // enable_debug = true;
 
-  generate(1e7, 200);
+  generate(1e7, 500);
   stdSort();
   insertAll();
   outputIt();
@@ -228,7 +228,7 @@ TEST_F(TrieTest, t4) {
   this->init(8);
   // enable_debug = true;
 
-  generate(5e7, 200);
+  generate(1e7, 1000);
   stdSort();
   insertAll();
   outputIt();

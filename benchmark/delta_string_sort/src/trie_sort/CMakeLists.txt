@@ -1,4 +1,4 @@
-add_library(trie_sort trie_sort.cc trie_sort.h)
+add_library(trie_sort semistring.cc trie_sort.cc trie_sort.h)
 target_link_libraries(trie_sort PRIVATE glog::glog fmt::fmt)
 
 add_library(trie_sort_encode hack_column_reader.h hack_encoding.h)

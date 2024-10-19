@@ -3,9 +3,7 @@
 #include <cerrno>
 #include <cmath>
 #include <cstddef>
-#include <deque>
-#include <memory>
-#include <stack>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -14,6 +12,8 @@
 #include <sys/types.h>
 
 namespace whippet_sort::trie ::trie__internal {
+
+constexpr static int kInplaceStore = 2;
 
 constexpr static uint8_t kElementBit = 4;
 constexpr static uint8_t kElementNum = 1 << kElementBit;
@@ -53,13 +53,14 @@ public:
   inline size_t length() const { return length_; }
 
   SemiStringView substr(size_t pos, size_t len) const {
+    DCHECK_LE(pos + len, length_);
     if (length_ == 0) {
       return SemiStringView();
     }
-    DCHECK_LE(pos + len, length_);
+    if (len == length_)
+      return *this;
     if (is_first_half_)
       pos++;
-
     auto start = pos >> 1;
     auto end = (pos + len - 1) >> 1;
     DCHECK_LT(end, str_.length());
@@ -72,11 +73,13 @@ public:
   }
 
   inline SemiStringView substr_tail(size_t start_pos) const {
+    if (start_pos == 0)
+      return *this;
     return substr(start_pos, length() - start_pos);
   }
 
-  size_t prefix_len(const SemiStringView &rhs) const {
-    CHECK_EQ(is_first_half_, rhs.is_first_half_);
+  size_t prefix_eq_len(const SemiStringView &rhs) const {
+    DCHECK_EQ(is_first_half_, rhs.is_first_half_);
     size_t i = 0;
     if (is_first_half_) {
       if (str_[0] != rhs.str_[0]) {
@@ -84,6 +87,13 @@ public:
       }
       i = 1;
     }
+
+    // if (!inplace_str_enabled_) {
+    //   load_inplace_str();
+    // }
+    // if (!rhs.inplace_str_enabled_) {
+    //   rhs.load_inplace_str();
+    // }
 
     using CmpT = uint64_t;
     constexpr auto gap = sizeof(CmpT) / sizeof(uint8_t) * kTranF;
@@ -103,7 +113,36 @@ public:
     return i;
   }
 
+  void to_string(std::string *ret, uint8_t first_elm) const {
+    CHECK((is_first_half_ + length_) % 2 == 0);
+    CHECK(first_elm < kElementNum);
+    *ret = std::move(str_);
+    if (is_first_half_) {
+      (*ret)[0] = (first_elm << kElementBit) + ((*ret)[0] & kMask1);
+    }
+  }
+
 private:
+  // void load_inplace_str() {
+  //   inplace_str_enabled_ = true;
+
+  //   static_assert(sizeof(inplace_str_[0]) / sizeof(uint8_t) == 8);
+
+  //   constexpr auto gap = sizeof(uint64_t) / sizeof(uint8_t) * kTranF;
+  //   auto s_ptr = str_.data() + is_first_half_;
+  //   size_t i = 0;
+  //   for (; i * gap + gap < length() && i < kInplaceStore; ++i) {
+  //     inplace_str_[i] = *reinterpret_cast<const uint64_t *>(s_ptr + i * 8);
+  //   }
+
+  //   if (i < kInplaceStore && i * gap < length()) {
+  //     inplace_str_[i] = 0;
+  //     for (size_t j = i * 8; j * kTranF < length(); ++j) {
+  //       inplace_str_[i] = (inplace_str_[i] << kElementBit) | s_ptr[j];
+  //     }
+  //   }
+  // }
+
   std::string_view str_;
   bool is_first_half_ = false;
   size_t length_;
@@ -115,6 +154,18 @@ class SemiString {
 public:
   SemiString() = default;
 
+  SemiString(const SemiStringView &s) {
+    str_ = s.str_;
+    is_first_half_ = s.is_first_half_;
+    length_ = s.length_;
+    if (is_first_half_) {
+      str_[0] = (str_[0] & kMask1);
+    }
+    if ((is_first_half_ + length_) & 1) {
+      str_.back() = (str_.back() & kMask0);
+    }
+  }
+
   uint8_t operator[](size_t i) const {
     CHECK_GT(length_, 0);
     CHECK_LT(i, length_);
@@ -125,6 +176,8 @@ public:
     return (i & 1) ? ((str_[i >> 1] & kMask1))
                    : ((str_[i >> 1] & kMask0) >> kElementBit);
   }
+
+  void reserve(size_t len) { str_.reserve(len / 2 + 1); }
 
   inline uint8_t back() const {
     CHECK_GT(length_, 0);
@@ -165,6 +218,12 @@ public:
     length_ += v.length_;
   }
 
+  SemiString substr(size_t pos, size_t len) const {
+    CHECK_LE(pos + len, length());
+    SemiStringView v(*this);
+    return v.substr(pos, len);
+  }
+
   void pop_back(size_t len) {
     CHECK_GE(length_, len);
     length_ -= len;
@@ -182,6 +241,11 @@ public:
     if (is_first_half_) {
       (*ret)[0] = (first_elm << kElementBit) + ((*ret)[0] & kMask1);
     }
+  }
+
+  bool operator>(const SemiString &rhs) const {
+    CHECK_EQ(is_first_half_, rhs.is_first_half_);
+    return str_ > rhs.str_;
   }
 
 private:

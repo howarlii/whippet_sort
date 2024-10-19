@@ -416,7 +416,7 @@ protected:
     for (int i = 0; i < max_values; ++i) {
       auto str_view = std::string_view(
           reinterpret_cast<const char *>(buffer[i].ptr), buffer[i].len);
-      trie_builder_.Insert(prefix_len_ptr[i], std::move(str_view),
+      trie_builder_.insert(prefix_len_ptr[i], std::move(str_view),
                            idx_offset + i);
     }
 

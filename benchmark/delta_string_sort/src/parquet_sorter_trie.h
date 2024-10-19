@@ -43,6 +43,10 @@ public:
     open_file();
   }
 
+  void set_trie_config(const trie::TrieConfig &config) {
+    trie_config_ = config;
+  }
+
   // Sort the column with the given index and return the sorted index list.
   std::shared_ptr<arrow::Array> sort_by_column() override {
     if (col_idx_ >= metadata_->num_columns()) {
@@ -54,7 +58,7 @@ public:
       LOG(ERROR) << "Column is not a BYTE_ARRAY column.";
     }
 
-    trie::TrieBuilder trie_builder;
+    trie::TrieBuilder trie_builder(trie_config_);
     for (int i = 0; i < metadata_->num_row_groups(); ++i) {
       auto row_group = file_reader_->RowGroup(i);
       auto pager = row_group->GetColumnPageReader(col_idx_);
@@ -133,6 +137,7 @@ protected:
   unique_ptr<parquet::ParquetFileReader> file_reader_;
   shared_ptr<parquet::FileMetaData> metadata_;
 
+  trie::TrieConfig trie_config_;
   std::unique_ptr<trie::Trie<int>> trie_;
 };
 

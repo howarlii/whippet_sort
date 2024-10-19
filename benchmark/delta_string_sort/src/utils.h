@@ -96,8 +96,7 @@ public:
       tot_durations[round] = tot_duration;
     }
 
-    std::cout << std::endl
-              << fmt::format("step_time_avg[\"{}\"] = {}\n", name, "{");
+    std::cout << std::endl << fmt::format("\"{}\":  {}\n", name, "{");
     // Calculate average
     for (int step_i = 0; step_i < steps.size(); ++step_i) {
       double average = std::accumulate(durations[step_i].begin(),
@@ -107,10 +106,11 @@ public:
       // Calculate median
       // std::sort(durations[step_i].begin(), durations[step_i].end());
       // double median = durations[step_i][num_runs / 2];
-      std::cout << fmt::format("\"{}\": {},", step_names[step_i], average)
+      std::cout << fmt::format("\"{}\": {}{}", step_names[step_i], average,
+                               step_i == steps.size() - 1 ? "" : ",")
                 << std::endl;
     }
-    std::cout << "}\n";
+    std::cout << "},\n";
 
     double average =
         std::accumulate(tot_durations.begin(), tot_durations.end(), 0.0) /

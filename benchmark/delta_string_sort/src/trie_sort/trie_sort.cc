@@ -15,14 +15,28 @@
 
 namespace whippet_sort::trie {
 
-namespace trie__internal {
+// template <typename ValueT>
+std::unique_ptr<Trie<int>::Node> TrieBuilder::createNewNode(SemiStringView key,
+                                                            ValueT &&value) {
+  auto new_node = std::make_unique<Node>();
 
-SemiStringView::SemiStringView(const SemiString &str) {
-  str_ = str.str_;
-  is_first_half_ = str.is_first_half_;
-  length_ = str.length_;
+  new_node->parent = curr_node_;
+  new_node->pdep = curr_length_;
+  if (curr_depth_ > config_.lazy_dep_lmt) {
+    new_node->is_lazy_node = true;
+    new_node->lazy_keys.emplace_back(
+        Trie<ValueT>::LazyKey{.prefix_len = 0, .key = key, .value = value});
+    constexpr auto kSemiInplaceLen = 32;
+    new_node->str =
+        key.length() > kSemiInplaceLen ? key.substr(0, kSemiInplaceLen) : key;
+    // TODO: hard code kSemiInplaceLen here, might be align with
+    // kSemiInplaceLen
+  } else {
+    new_node->is_lazy_node = false;
+    new_node->str = key;
+    new_node->values.push_back(value);
+  }
+  return new_node;
 }
-
-} // namespace trie__internal
 
 } // namespace whippet_sort::trie
