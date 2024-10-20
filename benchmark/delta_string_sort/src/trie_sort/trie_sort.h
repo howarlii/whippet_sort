@@ -21,10 +21,10 @@ using namespace trie__internal;
 
 struct TrieConfig {
   // lazy node are allowed when depth is bigger than lazy_dep_lmt
-  int lazy_dep_lmt = 5;
+  int lazy_dep_lmt = 4;
 
   // lazy node brust limit
-  int lazy_key_burst_lmt = 2048;
+  int lazy_key_burst_lmt = 4096;
 };
 
 template <typename ValueT> struct Trie {

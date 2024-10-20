@@ -21,6 +21,19 @@ constexpr static size_t kTranF = sizeof(char) * 8 / kElementBit;
 constexpr static uint8_t kMask0 = 0xf0;
 constexpr static uint8_t kMask1 = 0x0f;
 
+static inline uint8_t get_mask1(uint8_t v) { return (v & kMask1); }
+static inline uint8_t set_mask1(uint8_t v) {
+  // DCHECK_LT(v, kElementNum);
+  return (v);
+}
+static inline uint8_t get_mask0(uint8_t v) {
+  return (v & kMask0) >> kElementBit;
+}
+static inline uint8_t set_mask0(uint8_t v) {
+  // DCHECK_LT(v, kElementNum);
+  return (v) << kElementBit;
+}
+
 static_assert(sizeof(char) * 8 % kElementBit == 0, " ");
 
 class SemiString;
@@ -41,8 +54,7 @@ public:
       ++i;
     }
 
-    return (i & 1) ? ((str_[i >> 1] & kMask1))
-                   : ((str_[i >> 1] & kMask0) >> kElementBit);
+    return (i & 1) ? get_mask1(str_[i >> 1]) : get_mask0(str_[i >> 1]);
   }
 
   inline uint8_t back() const {
@@ -82,7 +94,7 @@ public:
     DCHECK_EQ(is_first_half_, rhs.is_first_half_);
     size_t i = 0;
     if (is_first_half_) {
-      if (str_[0] != rhs.str_[0]) {
+      if (get_mask1(str_[0]) != get_mask1(rhs.str_[0])) {
         return 0;
       }
       i = 1;
@@ -95,21 +107,21 @@ public:
     //   rhs.load_inplace_str();
     // }
 
-    using CmpT = uint64_t;
+    using CmpT = size_t;
     constexpr auto gap = sizeof(CmpT) / sizeof(uint8_t) * kTranF;
     for (; i + gap < length() && i + gap < rhs.length(); i += gap) {
-      auto p1 = reinterpret_cast<const CmpT *>(str_.data() + (i + 1) / 2);
-      auto p2 = reinterpret_cast<const CmpT *>(rhs.str_.data() + (i + 1) / 2);
-      if (*p1 != *p2) {
+      auto p1 = *reinterpret_cast<const CmpT *>(str_.data() + (i + 1) / 2);
+      auto p2 = *reinterpret_cast<const CmpT *>(rhs.str_.data() + (i + 1) / 2);
+      if (auto t = p1 ^ p2) {
         break;
       }
     }
-
     for (; i < length() && i < rhs.length(); ++i) {
       if ((*this)[i] != rhs[i]) {
         return i;
       }
     }
+
     return i;
   }
 
@@ -118,7 +130,7 @@ public:
     CHECK(first_elm < kElementNum);
     *ret = std::move(str_);
     if (is_first_half_) {
-      (*ret)[0] = (first_elm << kElementBit) + ((*ret)[0] & kMask1);
+      (*ret)[0] = set_mask0(first_elm) | set_mask1(get_mask1((*ret)[0]));
     }
   }
 
@@ -173,8 +185,7 @@ public:
       ++i;
     }
 
-    return (i & 1) ? ((str_[i >> 1] & kMask1))
-                   : ((str_[i >> 1] & kMask0) >> kElementBit);
+    return (i & 1) ? get_mask1(str_[i >> 1]) : get_mask0(str_[i >> 1]);
   }
 
   void reserve(size_t len) { str_.reserve(len / 2 + 1); }
@@ -188,12 +199,12 @@ public:
     if (is_first_half_) {
       ++pos;
     }
-    CHECK_LT(pos, 1 + 2 * str_.size());
-    CHECK_LE(v, kMask1);
+    DCHECK_LT(pos, 1 + 2 * str_.size());
+    DCHECK_LT(v, kElementNum);
     if (pos & 1) {
-      str_[pos / 2] = (str_[pos / 2] & kMask0) | v;
+      str_[pos / 2] = (str_[pos / 2] & kMask0) | set_mask1(v);
     } else {
-      str_[pos / 2] = (str_[pos / 2] & kMask1) | (v << kElementBit);
+      str_[pos / 2] = (str_[pos / 2] & kMask1) | set_mask0(v);
     }
   }
 
@@ -239,7 +250,7 @@ public:
     CHECK(first_elm < kElementNum);
     *ret = std::move(str_);
     if (is_first_half_) {
-      (*ret)[0] = (first_elm << kElementBit) + ((*ret)[0] & kMask1);
+      (*ret)[0] = set_mask0(first_elm) | set_mask1(get_mask1((*ret)[0]));
     }
   }
 
