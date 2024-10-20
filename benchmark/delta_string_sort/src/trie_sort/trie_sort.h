@@ -10,6 +10,7 @@
 #include <string_view>
 
 #include "semistring.h"
+#include "trie_sort_base.h"
 
 #include <fmt/format.h>
 #include <glog/logging.h>
@@ -55,7 +56,7 @@ template <typename ValueT> struct Trie {
 
 class TriePrinter;
 
-class TrieBuilder {
+class TrieBuilder : public TrieBuilderBase {
   using ValueT = int;
 
   using LazyKey = Trie<ValueT>::LazyKey;
@@ -94,17 +95,18 @@ public:
    * @param key The suffix of the key to insert
    * @param value The value to the key
    */
-  void insert(size_t prefix_len, const std::string_view &key_in, ValueT value) {
+  void insert(size_t prefix_len, const std::string_view &key_in,
+              ValueT value) override {
     ++trie_->value_num_;
     const auto &str = trie_->str_pool_.emplace_back(key_in);
     SemiStringView key(str);
     prefix_len *= kTranF;
 
     // LOG(INFO) << "insert: " << key_in << " " << value;
-    insert(prefix_len, std::move(key), value);
+    insert_impl(prefix_len, std::move(key), value);
   }
 
-  void insert(size_t prefix_len, SemiStringView &&key, ValueT value) {
+  void insert_impl(size_t prefix_len, SemiStringView &&key, ValueT value) {
     if (prefix_len == 0) {
       curr_node_ = trie_->root_.get();
       curr_length_ = 0;
@@ -200,7 +202,7 @@ public:
     DCHECK(false) << "should not reach here";
   }
 
-  auto valueNum() const { return trie_->value_num_; }
+  size_t valueNum() const override { return trie_->value_num_; }
 
   std::unique_ptr<Trie<ValueT>> build() {
     auto ret = std::make_unique<Trie<ValueT>>();
@@ -226,12 +228,12 @@ private:
     DCHECK_GE(pref_len, 1);
     for (auto &lazy_key : node->lazy_keys) {
       if (pref_len > lazy_key.prefix_len) {
-        insert(pdep + pref_len,
-               lazy_key.key.substr_tail(pref_len - lazy_key.prefix_len),
-               std::move(lazy_key.value));
+        insert_impl(pdep + pref_len,
+                    lazy_key.key.substr_tail(pref_len - lazy_key.prefix_len),
+                    std::move(lazy_key.value));
       } else {
-        insert(pdep + lazy_key.prefix_len, std::move(lazy_key.key),
-               std::move(lazy_key.value));
+        insert_impl(pdep + lazy_key.prefix_len, std::move(lazy_key.key),
+                    std::move(lazy_key.value));
       }
     }
     node->lazy_keys.clear();

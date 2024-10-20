@@ -105,14 +105,17 @@ def run_benchmark_and_draw(data_name, data_path="", lazy_dep_lmt=4, lazy_key_bur
     # plt.show()
 
 
-run_benchmark_and_draw("2e5-100")
-run_benchmark_and_draw("2e5-200")
-run_benchmark_and_draw("2e5-400")
+lazy_dep_lmt = 1000000000
+lazy_key_burst_lmt = 4096
 
-run_benchmark_and_draw("2e6-100")
-run_benchmark_and_draw("2e6-200")
-run_benchmark_and_draw("2e6-400")
+run_benchmark_and_draw("2e5-100", "", lazy_dep_lmt, lazy_key_burst_lmt)
+run_benchmark_and_draw("2e5-200", "", lazy_dep_lmt, lazy_key_burst_lmt)
+run_benchmark_and_draw("2e5-400", "", lazy_dep_lmt, lazy_key_burst_lmt)
 
-run_benchmark_and_draw("2e7-100")
-run_benchmark_and_draw("2e7-200")
-# run_benchmark_and_draw("2e7-300")
+run_benchmark_and_draw("2e6-100", "", lazy_dep_lmt, lazy_key_burst_lmt)
+run_benchmark_and_draw("2e6-200", "", lazy_dep_lmt, lazy_key_burst_lmt)
+run_benchmark_and_draw("2e6-400", "", lazy_dep_lmt, lazy_key_burst_lmt)
+
+run_benchmark_and_draw("2e7-100", "", lazy_dep_lmt, lazy_key_burst_lmt)
+run_benchmark_and_draw("2e7-200", "", lazy_dep_lmt, lazy_key_burst_lmt)
+# run_benchmark_and_draw("2e7-400", "", lazy_dep_lmt, lazy_key_burst_lmt)

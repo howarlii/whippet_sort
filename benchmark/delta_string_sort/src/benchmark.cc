@@ -21,18 +21,20 @@
 
 #include "parquet_sorter.h"
 #include "parquet_sorter_trie.h"
+#include "parquet_sorter_trie_v2.h"
 #include "utils.h"
 
 using namespace whippet_sort;
 
 DEFINE_string(input_file,
-              std::string(PROJECT_SOURCE_DIR) + "/data/input-2e4-40.parquet",
+              std::string(PROJECT_SOURCE_DIR) + "/data/input-2e5-100.parquet",
               "Input file path");
 DEFINE_int32(sort_col_idx, 1, "Column index to sort by");
 
 DEFINE_bool(hi_arrow, false, "Run high-level Arrow sorting benchmark");
 DEFINE_bool(low_arrow, false, "Run low-level Arrow sorting benchmark");
 DEFINE_bool(trie, false, "Run trie-based sorting benchmark");
+DEFINE_bool(trie_v2, false, "Run trie-based sorting benchmark v2");
 
 DEFINE_int32(trie_lazy_dep_lmt, 5, "Trie lazy depth limit");
 DEFINE_int32(trie_lazy_key_burst_lmt, 2048, "Trie lazy key burst limit");
@@ -93,6 +95,9 @@ int main(int argc, char *argv[]) {
     });
     steps.push_back([&]() {
       sorter->generate_result();
+#ifndef NDEBUG
+      sorter->check_correctness();
+#endif
       return "generate result";
     });
     auto [arrow_median, arrow_average] =
@@ -120,12 +125,45 @@ int main(int argc, char *argv[]) {
     });
     steps.push_back([&]() {
       sorter->generate_result();
+#ifndef NDEBUG
+      sorter->check_correctness();
+#endif
       return "generate result";
     });
     auto [median, average] =
         Utils::benchmark("Trie", num_runs, std::move(steps));
 
     std::cout << "# Whippet sorting (Trie) - Median: " << median
+              << "ms, Average: " << average << "ms" << std::endl;
+  }
+
+  if (FLAGS_trie_v2 || run_all) {
+    std::unique_ptr<whippet_sort::ParquetSorterTrieV2> sorter;
+    trie_v2::TrieConfig config;
+    config.lazy_dep_lmt = FLAGS_trie_lazy_dep_lmt;
+    config.lazy_key_burst_lmt = FLAGS_trie_lazy_key_burst_lmt;
+
+    std::vector<std::function<std::string()>> steps;
+    steps.push_back([&]() { return ""; }); // for align output
+    steps.push_back([&]() {
+      Utils::drop_file_cache(input_file);
+      sorter = std::make_unique<whippet_sort::ParquetSorterTrieV2>(input_file,
+                                                                   col_idx);
+      sorter->set_trie_config(config);
+      auto idx_array = sorter->sort_by_column();
+      return "read+sort";
+    });
+    steps.push_back([&]() {
+      sorter->generate_result();
+#ifndef NDEBUG
+      sorter->check_correctness();
+#endif
+      return "generate result";
+    });
+    auto [median, average] =
+        Utils::benchmark("TrieV2", num_runs, std::move(steps));
+
+    std::cout << "# Whippet sorting (TrieV2) - Median: " << median
               << "ms, Average: " << average << "ms" << std::endl;
   }
   // Check correctness

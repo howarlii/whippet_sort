@@ -1,5 +1,5 @@
 # Add test cpp file
-add_executable(UnitTests parquet_sort.cpp trie_test.cpp)
+add_executable(UnitTests parquet_sort.cpp trie_test.cpp trie_v2_test.cpp)
 target_include_directories(UnitTests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 # Link test executable against gtest & gtest_main

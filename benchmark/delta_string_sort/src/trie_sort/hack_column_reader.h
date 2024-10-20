@@ -397,8 +397,8 @@ public:
         std::move(ptr);
   }
 
-  void SetTrieBuilder(trie::TrieBuilder &&builder) {
-    trie_sort_decoder_->SetTrieBuilder(std::move(builder));
+  void SetTrieBuilder(TrieBuilderBase *builder) {
+    trie_sort_decoder_->SetTrieBuilder(builder);
   }
 
   bool HasNext() { return this->HasNextInternal(); }

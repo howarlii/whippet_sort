@@ -414,10 +414,9 @@ protected:
         buffered_prefix_length_->data_as<int32_t>() + prefix_len_offset_;
 
     for (int i = 0; i < max_values; ++i) {
-      auto str_view = std::string_view(
-          reinterpret_cast<const char *>(buffer[i].ptr), buffer[i].len);
-      trie_builder_.insert(prefix_len_ptr[i], std::move(str_view),
-                           idx_offset + i);
+      auto str_view = std::string_view(buffer[i]);
+      trie_builder_->insert(prefix_len_ptr[i], std::move(str_view),
+                            idx_offset + i);
     }
 
     prefix_len_offset_ += max_values;
@@ -431,7 +430,7 @@ protected:
     return max_values;
   }
 
-  trie::TrieBuilder trie_builder_;
+  TrieBuilderBase *trie_builder_{nullptr};
 
   MemoryPool *pool_;
 
@@ -462,8 +461,8 @@ public:
     return this->GetInternal(buffer, max_values, idx_offset);
   }
 
-  void SetTrieBuilder(trie::TrieBuilder &&builder) {
-    this->trie_builder_ = std::move(builder);
+  void SetTrieBuilder(TrieBuilderBase *builder) {
+    this->trie_builder_ = builder;
   }
 
   auto &GetTrieBuilder() { return this->trie_builder_; }
