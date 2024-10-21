@@ -82,6 +82,7 @@ public:
     auto begin_time = std::chrono::steady_clock::now();
 
     trie_printer = std::make_unique<TriePrinter>(trie_.build());
+    trie_printer->preSort();
     trie_printer->registerFunc(f);
     trie_printer->print();
 

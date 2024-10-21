@@ -23,10 +23,7 @@ using ValueT = int;
 constexpr size_t kElementNum = 256;
 
 struct TrieConfig {
-  // lazy node are allowed when depth is bigger than lazy_dep_lmt
-  int lazy_dep_lmt = 4;
-
-  // lazy node brust limit
+  // lazy node brust limit, 0 means no lazy node
   int lazy_key_burst_lmt = 4096;
 };
 
@@ -42,6 +39,9 @@ struct Trie {
 
     // first: prefix length, second: value
     std::vector<std::pair<int, ValueT>> substr_values;
+
+    // lazy values, <prefix_len, value>
+    std::deque<std::pair<std::string, ValueT>> lazy_values;
   };
 
   std::array<Node *, kElementNum> roots{nullptr};
@@ -257,9 +257,35 @@ public:
 
   void registerFunc(FuncT func) { func_ = std::move(func); }
 
-  void print() {
-    init();
+  void preSort() {
+    CHECK(!pre_sorted);
+    for (auto &node : trie_->node_pool_) {
+      std::sort(node->substr_values.begin(), node->substr_values.end(),
+                [](auto &x, auto &y) { return x.first > y.first; });
+#ifndef NDEBUG
+      for (int i = 1; i < node->children_l.size(); ++i) {
+        DCHECK(std::get<0>(node->children_l[i]) <
+                   std::get<0>(node->children_l[i - 1]) ||
+               (std::get<0>(node->children_l[i]) ==
+                    std::get<0>(node->children_l[i - 1]) &&
+                std::get<1>(node->children_l[i]) <
+                    std::get<1>(node->children_l[i - 1])));
+      }
+      for (int i = 1; i < node->children_g.size(); ++i) {
+        DCHECK(std::get<0>(node->children_g[i]) <
+                   std::get<0>(node->children_g[i - 1]) ||
+               (std::get<0>(node->children_g[i]) ==
+                    std::get<0>(node->children_g[i - 1]) &&
+                std::get<1>(node->children_g[i]) >
+                    std::get<1>(node->children_g[i - 1])));
+      }
+#endif
+    }
+    pre_sorted = true;
+  }
 
+  void print() {
+    CHECK(pre_sorted);
     for (auto &root : trie_->roots) {
       if (!root)
         continue;
@@ -324,31 +350,6 @@ public:
   auto valueNum() const { return trie_->value_num; }
 
 private:
-  void init() {
-    for (auto &node : trie_->node_pool_) {
-      std::sort(node->substr_values.begin(), node->substr_values.end(),
-                [](auto &x, auto &y) { return x.first > y.first; });
-#ifndef NDEBUG
-      for (int i = 1; i < node->children_l.size(); ++i) {
-        DCHECK(std::get<0>(node->children_l[i]) <
-                   std::get<0>(node->children_l[i - 1]) ||
-               (std::get<0>(node->children_l[i]) ==
-                    std::get<0>(node->children_l[i - 1]) &&
-                std::get<1>(node->children_l[i]) <
-                    std::get<1>(node->children_l[i - 1])));
-      }
-      for (int i = 1; i < node->children_g.size(); ++i) {
-        DCHECK(std::get<0>(node->children_g[i]) <
-                   std::get<0>(node->children_g[i - 1]) ||
-               (std::get<0>(node->children_g[i]) ==
-                    std::get<0>(node->children_g[i - 1]) &&
-                std::get<1>(node->children_g[i]) >
-                    std::get<1>(node->children_g[i - 1])));
-      }
-#endif
-    }
-  }
-
   void print_string(int value) {
     func_(last_prefix_len_, prefix_, value);
     last_prefix_len_ += prefix_.length();
@@ -358,6 +359,7 @@ private:
   std::unique_ptr<Trie> trie_;
   FuncT func_;
 
+  bool pre_sorted = false;
   std::string prefix_;
   size_t last_prefix_len_ = 0;
 

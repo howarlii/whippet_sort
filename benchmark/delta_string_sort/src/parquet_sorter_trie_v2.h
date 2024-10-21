@@ -72,15 +72,18 @@ public:
     return sort_index_;
   }
 
-  void generate_result() override {
-    trie_v2::TriePrinter printer(std::move(trie_));
+  void pre_sort() {
+    printer_ = std::make_unique<trie_v2::TriePrinter>(std::move(trie_));
+    printer_->preSort();
+  }
 
+  void generate_result() override {
     arrow::Int32Builder idx_builder;
-    if (auto ret = idx_builder.Reserve(printer.valueNum()); !ret.ok()) {
+    if (auto ret = idx_builder.Reserve(printer_->valueNum()); !ret.ok()) {
       LOG(ERROR) << ret.message();
     }
     ::arrow::StringBuilder str_builder;
-    if (!str_builder.Reserve(printer.valueNum()).ok()) {
+    if (!str_builder.Reserve(printer_->valueNum()).ok()) {
       LOG(ERROR) << "Failed to reserve space for string builder.";
     }
 
@@ -95,8 +98,8 @@ public:
       }
     };
 
-    printer.registerFunc(f);
-    printer.print();
+    printer_->registerFunc(f);
+    printer_->print();
 
     if (auto ret = idx_builder.Finish(&sort_index_); !ret.ok()) {
       LOG(ERROR) << ret.message();
@@ -151,6 +154,7 @@ protected:
 
   trie_v2::TrieConfig trie_config_;
   std::unique_ptr<trie_v2::Trie> trie_;
+  std::unique_ptr<trie_v2::TriePrinter> printer_;
 };
 
 } // namespace whippet_sort

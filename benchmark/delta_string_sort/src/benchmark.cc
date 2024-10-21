@@ -121,7 +121,7 @@ int main(int argc, char *argv[]) {
                                                                  col_idx);
       sorter->set_trie_config(config);
       auto idx_array = sorter->sort_by_column();
-      return "read+sort";
+      return "read+build";
     });
     steps.push_back([&]() {
       sorter->generate_result();
@@ -144,14 +144,17 @@ int main(int argc, char *argv[]) {
     config.lazy_key_burst_lmt = FLAGS_trie_lazy_key_burst_lmt;
 
     std::vector<std::function<std::string()>> steps;
-    steps.push_back([&]() { return ""; }); // for align output
     steps.push_back([&]() {
       Utils::drop_file_cache(input_file);
       sorter = std::make_unique<whippet_sort::ParquetSorterTrieV2>(input_file,
                                                                    col_idx);
       sorter->set_trie_config(config);
       auto idx_array = sorter->sort_by_column();
-      return "read+sort";
+      return "read+build";
+    });
+    steps.push_back([&]() {
+      sorter->pre_sort();
+      return "pre-sort";
     });
     steps.push_back([&]() {
       sorter->generate_result();
