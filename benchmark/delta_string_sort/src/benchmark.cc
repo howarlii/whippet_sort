@@ -35,6 +35,7 @@ DEFINE_bool(hi_arrow, false, "Run high-level Arrow sorting benchmark");
 DEFINE_bool(low_arrow, false, "Run low-level Arrow sorting benchmark");
 DEFINE_bool(trie, false, "Run trie-based sorting benchmark");
 DEFINE_bool(trie_v2, false, "Run trie-based sorting benchmark v2");
+DEFINE_bool(trie_v2_bfs, false, "Run trie-based sorting benchmark v2 bfs");
 
 DEFINE_int32(trie_lazy_dep_lmt, 5, "Trie lazy depth limit");
 DEFINE_int32(trie_lazy_key_burst_lmt, 2048, "Trie lazy key burst limit");
@@ -45,14 +46,20 @@ int main(int argc, char *argv[]) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
 
   nice(-20);
+#ifndef NDEBUG
+  const int num_runs = 1;
+#else
   const int num_runs = 5;
+#endif
+
   const uint32_t col_idx = FLAGS_sort_col_idx;
 
   // Use the input_file flag
   std::string input_file = FLAGS_input_file;
 
   // Check if any flags were set, if not, run all benchmarks
-  bool run_all = !FLAGS_hi_arrow && !FLAGS_low_arrow && !FLAGS_trie;
+  bool run_all = !FLAGS_hi_arrow && !FLAGS_low_arrow && !FLAGS_trie &&
+                 !FLAGS_trie_v2 && !FLAGS_trie_v2_bfs;
   if (FLAGS_hi_arrow || run_all) {
     // Benchmark Arrow sorting
     std::vector<std::function<std::string()>> steps;
@@ -140,7 +147,7 @@ int main(int argc, char *argv[]) {
   if (FLAGS_trie_v2 || run_all) {
     std::unique_ptr<whippet_sort::ParquetSorterTrieV2> sorter;
     trie_v2::TrieConfig config;
-    config.lazy_dep_lmt = FLAGS_trie_lazy_dep_lmt;
+    // config.lazy_dep_lmt = FLAGS_trie_lazy_dep_lmt;
     config.lazy_key_burst_lmt = FLAGS_trie_lazy_key_burst_lmt;
 
     std::vector<std::function<std::string()>> steps;
@@ -148,7 +155,7 @@ int main(int argc, char *argv[]) {
       Utils::drop_file_cache(input_file);
       sorter = std::make_unique<whippet_sort::ParquetSorterTrieV2>(input_file,
                                                                    col_idx);
-      sorter->set_trie_config(config);
+      sorter->set_trie_builder(std::make_unique<trie_v2::TrieBuilder>(config));
       auto idx_array = sorter->sort_by_column();
       return "read+build";
     });
@@ -169,11 +176,40 @@ int main(int argc, char *argv[]) {
     std::cout << "# Whippet sorting (TrieV2) - Median: " << median
               << "ms, Average: " << average << "ms" << std::endl;
   }
-  // Check correctness
-  // bool count_correct =
-  //     check_whippet_sort_correctness("out_whippet_count.parquet", 0);
-  // std::cout << "Count Base Whippet sort correctness: "
-  //           << (count_correct ? "Correct" : "Incorrect") << std::endl;
+
+  if (FLAGS_trie_v2_bfs || run_all) {
+    std::unique_ptr<whippet_sort::ParquetSorterTrieV2> sorter;
+    trie_v2::TrieConfig config;
+    // config.lazy_dep_lmt = FLAGS_trie_lazy_dep_lmt;
+    config.lazy_key_burst_lmt = FLAGS_trie_lazy_key_burst_lmt;
+
+    std::vector<std::function<std::string()>> steps;
+    steps.push_back([&]() {
+      Utils::drop_file_cache(input_file);
+      sorter = std::make_unique<whippet_sort::ParquetSorterTrieV2>(input_file,
+                                                                   col_idx);
+      sorter->set_trie_builder(
+          std::make_unique<trie_v2::TrieBuilderBfs>(config));
+      auto idx_array = sorter->sort_by_column();
+      return "read+build";
+    });
+    steps.push_back([&]() {
+      sorter->pre_sort();
+      return "pre-sort";
+    });
+    steps.push_back([&]() {
+      sorter->generate_result();
+#ifndef NDEBUG
+      sorter->check_correctness();
+#endif
+      return "generate result";
+    });
+    auto [median, average] =
+        Utils::benchmark("TrieV2Bfs", num_runs, std::move(steps));
+
+    std::cout << "# Whippet sorting (TrieV2Bfs) - Median: " << median
+              << "ms, Average: " << average << "ms" << std::endl;
+  }
 
   gflags::ShutDownCommandLineFlags();
   return 0;

@@ -29,36 +29,38 @@ struct TrieConfig {
 
 struct Trie {
   struct Node {
-    Node *parent{nullptr};
-    size_t plen{0}; // the length of the prefix
+    // Node(size_t node_id) : node_id(node_id) {}
+
+    const size_t node_id;
+    Node *const parent{nullptr};
+    const size_t plen{0}; // the length of the prefix
     std::string str;
-    // std::vector<ValueT> values;
 
     // first: prefix length, second: char, third: child node
     std::vector<std::tuple<int, uint8_t, Node *>> children_l, children_g;
 
-    // first: prefix length, second: value
+    // first: prefix length, second: value (including the str of this node)
     std::vector<std::pair<int, ValueT>> substr_values;
 
     // lazy values, <prefix_len, value>
     std::deque<std::pair<std::string, ValueT>> lazy_values;
+    bool is_lazy = false;
   };
+
+  auto createNode(Node *parent, size_t plen, std::string str, ValueT value) {
+    auto new_node = std::make_unique<Node>(
+        Node{.node_id = node_num++, .parent = parent, .plen = plen});
+    new_node->substr_values.emplace_back(str.length(), value);
+    new_node->str = std::move(str);
+
+    return this->node_pool_.emplace_back(std::move(new_node)).get();
+  }
 
   std::array<Node *, kElementNum> roots{nullptr};
   size_t value_num = 0;
+  size_t node_num = 0;
 
   std::deque<std::unique_ptr<Node>> node_pool_;
-  // std::deque<std::string> str_pool_; // TODO: to be optimized
-  // std::deque<std::string> str_pool_; // slower, why?
-
-  // Trie() = default;
-  // void reset() {
-  //   for (auto &root : roots) {
-  //     root = nullptr;
-  //   }
-  //   value_num = 0;
-  //   node_pool_.clear();
-  // }
 };
 
 namespace {
@@ -89,6 +91,7 @@ size_t prefix_eq_len(const T &x, size_t x_pos, const std::string &y,
 class TriePrinter;
 
 class TrieBuilder : public TrieBuilderBase {
+protected:
   using Node = Trie::Node;
   friend class TriePrinter;
 
@@ -97,6 +100,8 @@ public:
       : trie_(std::make_unique<Trie>()), config_(config) {
     reset();
   };
+
+  using TrieBuilderBase::insert;
 
   /**
    * @brief Insert a key into the tree
@@ -108,17 +113,10 @@ public:
               ValueT value) override {
     if (prefix_len == 0) {
       if (trie_->roots[key[0]] == nullptr) {
-        auto new_node = std::make_unique<Node>();
-        curr_node_ = trie_->roots[key[0]] = new_node.get();
-        trie_->node_pool_.emplace_back(std::move(new_node));
+        auto new_node = trie_->createNode(nullptr, 0, std::string(key), value);
+        curr_node_ = trie_->roots[key[0]] = new_node;
 
-        auto len = key.length();
-        curr_node_->parent = nullptr;
-        curr_node_->plen = 0;
-        curr_node_->str = std::move(key);
-        curr_node_->substr_values.emplace_back(len, value);
-
-        curr_length_ = len;
+        curr_length_ = key.length();
         curr_depth_ = 1;
         return;
       }
@@ -169,7 +167,7 @@ public:
 
         // TODO: std::lower_bound can be optimized
         if (curr_node_->str[curr_skip_len] < key[key_i]) {
-          //  key is greater than curr_node_->str
+          // key is greater than curr_node_->str
           children = &curr_node_->children_g;
           pos = std::lower_bound(children->begin(), children->end(),
                                  std::make_tuple(curr_skip_len, ch, nullptr),
@@ -197,12 +195,9 @@ public:
           DCHECK_EQ(curr_length_, curr_node_->plen);
         } else {
           // create a new node
-          auto new_node =
-              trie_->node_pool_.emplace_back(std::make_unique<Node>()).get();
-          new_node->parent = curr_node_;
-          new_node->plen = curr_node_->plen + curr_skip_len;
-          new_node->str = key_i ? key.substr(key_i) : std::move(key);
-          new_node->substr_values.emplace_back(new_node->str.length(), value);
+          auto new_node = trie_->createNode(
+              curr_node_, curr_node_->plen + curr_skip_len,
+              std::string(key_i ? key.substr(key_i) : key), value);
 
           children->insert(pos, std::make_tuple(curr_skip_len, ch, new_node));
 
@@ -214,6 +209,7 @@ public:
       }
     }
     DCHECK(false) << "should not reach here";
+    // TODO: break down the edge if too long (too many elements).
   }
 
   size_t valueNum() const override { return trie_->value_num; }
@@ -225,7 +221,7 @@ public:
     return ret;
   }
 
-private:
+protected:
   void reset() {
     trie_ = std::make_unique<Trie>();
     curr_node_ = nullptr;
@@ -234,12 +230,153 @@ private:
   };
 
   std::unique_ptr<Trie> trie_;
+  TrieConfig config_;
 
+private:
   Node *curr_node_;
   size_t curr_length_; // length of string
   size_t curr_depth_;  // number of nodes
+};
 
-  TrieConfig config_;
+class TrieBuilderBfs : public TrieBuilder {
+public:
+  TrieBuilderBfs(TrieConfig config = {}) : TrieBuilder(std::move(config)) {}
+
+  void insert(size_t prefix_len, const std::string_view &key,
+              ValueT value) override {
+    throw std::runtime_error("not implemented");
+  }
+
+  void
+  insert(std::vector<std::tuple<size_t, std::string_view, int>> keys) override {
+    CHECK(!keys.empty());
+    CHECK(std::get<0>(keys.front()) == 0);
+    char ch;
+    Node *curr_node = nullptr;
+    for (auto &[prefix_len, key, value] : keys) {
+      if (prefix_len == 0) {
+        DCHECK(!key.empty());
+        ch = key[0];
+        if (trie_->roots[ch] == nullptr) {
+          auto new_node =
+              trie_->createNode(nullptr, 0, std::string(key), value);
+          lazy_keys_.emplace_back();
+          curr_node = trie_->roots[ch] = new_node;
+          continue;
+        }
+        curr_node = trie_->roots[ch];
+      }
+      lazy_keys_[curr_node->node_id].emplace_back(prefix_len, std::move(key),
+                                                  value);
+      to_visit_nodes_.push_back(curr_node);
+    }
+    while (!to_visit_nodes_.empty()) {
+      auto node = to_visit_nodes_.front();
+      to_visit_nodes_.pop_front();
+
+      auto nid = node->node_id;
+      if (!lazy_keys_[nid].empty()) {
+        insert_impl(node);
+      }
+    }
+    to_visit_nodes_.clear();
+  }
+
+protected:
+  void insert_impl(Node *curr_node) {
+    DCHECK_LT(curr_node->node_id, lazy_keys_.size())
+        << "nid: " << curr_node->node_id
+        << ", node_keys_.size(): " << lazy_keys_.size();
+    auto curr_length = curr_node->plen + curr_node->str.length();
+    size_t str_skip_len = 0;
+    decltype(lazy_keys_)::value_type *last_key_go = nullptr;
+    for (auto &[prefix_len, key, value] : lazy_keys_[curr_node->node_id]) {
+      DCHECK_LE(curr_node->plen, prefix_len)
+          << "prefix_len too small! prefix_len: " << prefix_len
+          << ", curr_node->plen: " << curr_node->plen;
+      if (last_key_go && curr_node->plen + str_skip_len < prefix_len) {
+        // go where last key go
+        last_key_go->emplace_back(prefix_len, std::move(key), value);
+        continue;
+      }
+      DCHECK_GE(curr_length, prefix_len)
+          << "prefix_len too large! prefix_len: " << prefix_len
+          << ", curr_length: " << curr_length;
+
+      last_key_go = nullptr;
+      str_skip_len =
+          prefix_len > curr_node->plen ? prefix_len - curr_node->plen : 0;
+      auto same_len = prefix_eq_len(key, 0, curr_node->str, str_skip_len);
+
+      str_skip_len += same_len;
+      DCHECK_LE(str_skip_len, curr_node->str.length());
+      DCHECK_LT(0, str_skip_len);
+
+      if (same_len == key.length()) {
+        curr_node->substr_values.emplace_back(str_skip_len, value);
+        continue;
+      } else if (str_skip_len == curr_node->str.length()) {
+        curr_node->str.append(key.substr(same_len));
+        curr_node->substr_values.emplace_back(curr_node->str.length(), value);
+        curr_length = curr_node->plen + curr_node->str.length();
+        continue;
+      } else {
+        auto children = &curr_node->children_l;
+        auto ch = key[same_len];
+        auto pos = children->end();
+
+        if (curr_node->str[str_skip_len] < key[same_len]) {
+          //  key is greater than curr_node->str
+          children = &curr_node->children_g;
+          pos = std::lower_bound(children->begin(), children->end(),
+                                 std::make_tuple(str_skip_len, ch, nullptr),
+                                 [](auto &x, auto &y) {
+                                   return std::get<0>(x) > std::get<0>(y) ||
+                                          (std::get<0>(x) == std::get<0>(y) &&
+                                           std::get<1>(x) < std::get<1>(y));
+                                 });
+        } else {
+          children = &curr_node->children_l;
+          pos = std::lower_bound(children->begin(), children->end(),
+                                 std::make_tuple(str_skip_len, ch, nullptr),
+                                 [](auto &x, auto &y) {
+                                   return std::get<0>(x) > std::get<0>(y) ||
+                                          (std::get<0>(x) == std::get<0>(y) &&
+                                           std::get<1>(x) > std::get<1>(y));
+                                 });
+        }
+        auto &[len, c, child_node] = *pos;
+        if (pos != children->end() && len == str_skip_len && c == ch) {
+          // go to the child node and continue
+          auto new_nid = child_node->node_id;
+          prefix_len += same_len;
+          lazy_keys_[new_nid].emplace_back(prefix_len, key.substr(same_len),
+                                           value);
+          last_key_go = &lazy_keys_[new_nid];
+          to_visit_nodes_.push_back(child_node);
+        } else {
+          // create a new node
+          if (same_len) {
+            key = key.substr(same_len);
+          }
+          auto new_node =
+              trie_->createNode(curr_node, curr_node->plen + str_skip_len,
+                                std::string(key), value);
+          children->insert(pos, std::make_tuple(str_skip_len, ch, new_node));
+
+          lazy_keys_.emplace_back();
+          last_key_go = &lazy_keys_[new_node->node_id];
+          to_visit_nodes_.push_back(new_node);
+          continue;
+        }
+      }
+    }
+    lazy_keys_[curr_node->node_id].clear();
+  }
+
+  std::deque<Node *> to_visit_nodes_;
+  std::vector<std::vector<std::tuple<size_t, std::string_view, int>>>
+      lazy_keys_;
 };
 
 class TriePrinter {
@@ -260,6 +397,7 @@ public:
   void preSort() {
     CHECK(!pre_sorted);
     for (auto &node : trie_->node_pool_) {
+      // auto nid = node->node_id;
       std::sort(node->substr_values.begin(), node->substr_values.end(),
                 [](auto &x, auto &y) { return x.first > y.first; });
 #ifndef NDEBUG

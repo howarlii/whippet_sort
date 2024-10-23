@@ -9,7 +9,7 @@
 namespace whippet_sort::trie_v2 {
 namespace {
 
-class TrieTestV2 : public ::testing::Test {
+class TrieTestV2Bfs : public ::testing::Test {
 public:
   void init(uint8_t lmt) { characters = "abcdefghijklmnopqrstuvwxyz"; }
 
@@ -58,9 +58,13 @@ public:
 
   void insertAll() {
     auto begin_time = std::chrono::steady_clock::now();
+    std::vector<std::tuple<size_t, std::string_view, int>> keys;
+    keys.reserve(a_prefixs.size());
     for (int i = 0; i < a_prefixs.size(); ++i) {
-      trie_.insert(a_prefix_lens[i], a_prefixs[i], i);
+      keys.emplace_back(a_prefix_lens[i], a_prefixs[i], i);
     }
+    trie_.insert(std::move(keys));
+
     auto end_time = std::chrono::steady_clock::now() - begin_time;
     LOG(INFO) << "insert time: "
               << std::chrono::duration_cast<std::chrono::milliseconds>(end_time)
@@ -131,7 +135,7 @@ protected:
   }
 
   // put in any custom data members that you need
-  TrieBuilder trie_;
+  TrieBuilderBfs trie_;
   std::unique_ptr<TriePrinter> trie_printer;
 
   std::string characters;
@@ -141,7 +145,7 @@ protected:
   bool enable_debug = false;
 };
 
-TEST_F(TrieTestV2, t1) {
+TEST_F(TrieTestV2Bfs, t1) {
   this->init(2);
   enable_debug = true;
 
@@ -151,7 +155,7 @@ TEST_F(TrieTestV2, t1) {
   outputIt();
 }
 
-TEST_F(TrieTestV2, t2) {
+TEST_F(TrieTestV2Bfs, t2) {
   this->init(8);
   // enable_debug = true;
 
@@ -161,7 +165,7 @@ TEST_F(TrieTestV2, t2) {
   outputIt();
 }
 
-TEST_F(TrieTestV2, t3) {
+TEST_F(TrieTestV2Bfs, t3) {
   this->init(8);
   // enable_debug = true;
 
@@ -171,7 +175,7 @@ TEST_F(TrieTestV2, t3) {
   outputIt();
 }
 
-TEST_F(TrieTestV2, t4) {
+TEST_F(TrieTestV2Bfs, t4) {
   this->init(8);
   // enable_debug = true;
 

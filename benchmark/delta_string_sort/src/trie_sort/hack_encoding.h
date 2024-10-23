@@ -413,11 +413,13 @@ protected:
     const int32_t *prefix_len_ptr =
         buffered_prefix_length_->data_as<int32_t>() + prefix_len_offset_;
 
+    std::vector<std::tuple<size_t, std::string_view, int>> keys;
+    keys.reserve(max_values);
     for (int i = 0; i < max_values; ++i) {
       auto str_view = std::string_view(buffer[i]);
-      trie_builder_->insert(prefix_len_ptr[i], std::move(str_view),
-                            idx_offset + i);
+      keys.emplace_back(prefix_len_ptr[i], std::move(str_view), idx_offset + i);
     }
+    trie_builder_->insert(std::move(keys));
 
     prefix_len_offset_ += max_values;
     this->num_values_ -= max_values;

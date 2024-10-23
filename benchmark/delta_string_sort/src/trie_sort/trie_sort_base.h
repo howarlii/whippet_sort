@@ -29,6 +29,12 @@ public:
    */
   virtual void insert(size_t prefix_len, const std::string_view &key,
                       int value) = 0;
+  virtual void
+  insert(std::vector<std::tuple<size_t, std::string_view, int>> keys) {
+    for (auto &&[prefix_len, key, value] : keys) {
+      insert(prefix_len, key, value);
+    }
+  }
 
   virtual size_t valueNum() const = 0;
 };
