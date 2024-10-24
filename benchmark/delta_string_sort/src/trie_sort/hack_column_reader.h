@@ -28,10 +28,6 @@ namespace whippet_sort::hack_parquet {
 
 using namespace parquet;
 
-inline bool IsDictionaryIndexEncoding(const Encoding::type &e) {
-  return e == Encoding::RLE_DICTIONARY || e == Encoding::PLAIN_DICTIONARY;
-}
-
 template <typename DType> class ColumnReaderImplBase {
 public:
   using T = typename DType::c_type;
@@ -477,7 +473,7 @@ private:
   TrieSortDecoder<DType> *trie_sort_decoder_;
   Encoding::type first_page_encoding_;
 
-  ::arrow::StringBuilder builder_;
+  ::arrow::LargeStringBuilder builder_;
   std::vector<std::shared_ptr<::arrow::Array>> chunks_;
 
   std::vector<T> buffer_;

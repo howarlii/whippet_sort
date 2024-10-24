@@ -82,7 +82,7 @@ public:
     if (auto ret = idx_builder.Reserve(printer_->valueNum()); !ret.ok()) {
       LOG(ERROR) << ret.message();
     }
-    ::arrow::StringBuilder str_builder;
+    ::arrow::LargeStringBuilder str_builder;
     if (!str_builder.Reserve(printer_->valueNum()).ok()) {
       LOG(ERROR) << "Failed to reserve space for string builder.";
     }
@@ -120,7 +120,7 @@ public:
 
     std::string prev_str = "";
     for (int chunk_i = 0; chunk_i < sorted_column_->num_chunks(); ++chunk_i) {
-      auto str_array = std::static_pointer_cast<arrow::StringArray>(
+      auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(
           sorted_column_->chunk(chunk_i));
       for (int64_t i = 0; i < str_array->length(); ++i) {
         std::string curr_str = str_array->GetString(i);

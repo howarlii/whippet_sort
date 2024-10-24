@@ -29,8 +29,6 @@ struct TrieConfig {
 
 struct Trie {
   struct Node {
-    // Node(size_t node_id) : node_id(node_id) {}
-
     const size_t node_id;
     Node *const parent{nullptr};
     const size_t plen{0}; // the length of the prefix
@@ -42,8 +40,8 @@ struct Trie {
     // first: prefix length, second: value (including the str of this node)
     std::vector<std::pair<int, ValueT>> substr_values;
 
-    // lazy values, <prefix_len, value>
-    std::deque<std::pair<std::string, ValueT>> lazy_values;
+    // lazy values, <prefix_len, string, value>
+    std::deque<std::tuple<size_t, std::string, ValueT>> lazy_values;
     bool is_lazy = false;
   };
 
@@ -136,6 +134,16 @@ public:
 
     size_t key_i = 0;
     while (1) {
+      if (curr_node_->is_lazy) {
+        curr_node_->lazy_values.emplace_back(
+            prefix_len + key_i, std::string(key.substr(key_i)), value);
+        curr_length_ = curr_node_->plen + curr_node_->str.length();
+        if (curr_node_->lazy_values.size() > config_.lazy_key_burst_lmt) {
+          burstLazyNode(curr_node_);
+        }
+        return;
+      }
+
       DCHECK_GE(curr_length_, prefix_len)
           << "prefix_len too large! prefix_len: " << prefix_len
           << ", curr_length_: " << curr_length_;
@@ -198,6 +206,7 @@ public:
           auto new_node = trie_->createNode(
               curr_node_, curr_node_->plen + curr_skip_len,
               std::string(key_i ? key.substr(key_i) : key), value);
+          { new_node->is_lazy = true; }
 
           children->insert(pos, std::make_tuple(curr_skip_len, ch, new_node));
 
@@ -222,6 +231,16 @@ public:
   }
 
 protected:
+  void burstLazyNode(Node *node) {
+    DCHECK(node->is_lazy);
+    auto &lazy_values = node->lazy_values;
+    node->is_lazy = false;
+    for (auto &[prefix_len, key, value] : lazy_values) {
+      insert(prefix_len, key, value);
+    }
+    lazy_values.clear();
+  }
+
   void reset() {
     trie_ = std::make_unique<Trie>();
     curr_node_ = nullptr;
@@ -396,10 +415,15 @@ public:
 
   void preSort() {
     CHECK(!pre_sorted);
+    node_lazy_keys_.resize(trie_->node_num);
     for (auto &node : trie_->node_pool_) {
       // auto nid = node->node_id;
       std::sort(node->substr_values.begin(), node->substr_values.end(),
                 [](auto &x, auto &y) { return x.first > y.first; });
+
+      if (node->is_lazy) {
+        handleLazyNode(node.get(), node_lazy_keys_[node->node_id]);
+      }
 #ifndef NDEBUG
       for (int i = 1; i < node->children_l.size(); ++i) {
         DCHECK(std::get<0>(node->children_l[i]) <
@@ -435,6 +459,18 @@ public:
         auto &[node, node_prefix_len, idx] = prefix_stack_.top();
         // node_prefix_len is the length of the prefix inside the node->str
         // idx is the index of the child node in the children_g
+
+        if (node->is_lazy) {
+          // handleLazyNode(node);
+          for (auto &[key, value] : node_lazy_keys_[node->node_id]) {
+            prefix_.append(std::move(key));
+            print_string(value);
+            last_prefix_len_ -= key.length();
+          }
+
+          prefix_stack_.pop();
+          continue;
+        }
 
         // print the value that less than current node
         if (!node->children_l.empty()) {
@@ -488,6 +524,26 @@ public:
   auto valueNum() const { return trie_->value_num; }
 
 private:
+  void handleLazyNode(Node *node,
+                      std::vector<std::pair<std::string, ValueT>> &lazy_keys) {
+    auto last_str_len = node->plen + node->str.length();
+    // notice: pre_len might be 0
+    std::string last_key = node->str;
+    lazy_keys.reserve(node->lazy_values.size() + 1);
+    lazy_keys.emplace_back(last_key, node->substr_values.back().second);
+    CHECK_EQ(node->substr_values.size(), 1);
+
+    for (auto &[prefix_len, key, value] : node->lazy_values) {
+      DCHECK_LE(prefix_len, last_str_len);
+      int64_t key_i = prefix_len - node->plen;
+      last_key = last_key.substr(0, key_i) + key;
+      lazy_keys.emplace_back(last_key, value);
+      last_str_len = prefix_len + key.length();
+    }
+    std::sort(lazy_keys.begin(), lazy_keys.end(),
+              [](auto &x, auto &y) { return x.first < y.first; });
+  }
+
   void print_string(int value) {
     func_(last_prefix_len_, prefix_, value);
     last_prefix_len_ += prefix_.length();
@@ -503,7 +559,8 @@ private:
 
   std::stack<std::tuple<Node *, size_t, size_t>> prefix_stack_;
 
-  // std::vector<std::pair<std::string, ValueT>> lazy_keys_;
+  std::vector<std::pair<std::string, ValueT>> lazy_keys_;
+  std::vector<std::vector<std::pair<std::string, ValueT>>> node_lazy_keys_;
 };
 
 } // namespace whippet_sort::trie_v2

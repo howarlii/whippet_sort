@@ -124,7 +124,15 @@ public:
     auto begin_time = std::chrono::steady_clock::now();
 
     trie__printer = std::make_unique<TriePrinter>(trie_.build());
+    trie__printer->presort();
 
+    auto end_time = std::chrono::steady_clock::now() - begin_time;
+    LOG(INFO) << "preSort time: "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(end_time)
+                     .count()
+              << "ms";
+
+    begin_time = std::chrono::steady_clock::now();
     while (trie__printer->hasNext()) {
       size_t prefix_len;
       std::string key;
@@ -136,7 +144,7 @@ public:
       res_prefix_lens.push_back(prefix_len);
       // std::cout << prefix_len << " " << key << " " << values << std::endl;
     }
-    auto end_time = std::chrono::steady_clock::now() - begin_time;
+    end_time = std::chrono::steady_clock::now() - begin_time;
     LOG(INFO) << "output time: "
               << std::chrono::duration_cast<std::chrono::milliseconds>(end_time)
                      .count()
@@ -196,7 +204,7 @@ protected:
 
 TEST_F(TrieTest, t1) {
   this->init(2);
-  // enable_debug = true;
+  enable_debug = true;
 
   generate(10, 10);
   stdSort();

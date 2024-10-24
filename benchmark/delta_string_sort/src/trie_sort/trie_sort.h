@@ -37,9 +37,10 @@ template <typename ValueT> struct Trie {
   };
 
   struct Node {
+    const int id;
     bool is_lazy_node{false};
     std::deque<LazyKey> lazy_keys;
-    std::unique_ptr<Node> children[kElementNum]{nullptr};
+    Node *children[kElementNum]{nullptr};
     Node *parent{nullptr};
     SemiStringView str; // string on the edge to the parent, if this is a lazy
                         // node, str is the shared prefix
@@ -47,11 +48,21 @@ template <typename ValueT> struct Trie {
     std::vector<ValueT> values;
   };
 
-  std::unique_ptr<Node> root_{nullptr};
-  size_t value_num_;
+  Node *root_{nullptr};
+  size_t value_num_{0};
+  int node_num_{0};
+
+  std::deque<std::unique_ptr<Node>> node_pool_;
 
   std::deque<std::string> str_pool_; // TODO: to be optimized
   // std::deque<std::string> str_pool_; // slower, why?
+
+  Trie() { root_ = createNode(); }
+
+  Node *createNode() {
+    auto new_node = std::make_unique<Node>(Node{.id = node_num_++});
+    return node_pool_.emplace_back(std::move(new_node)).get();
+  }
 };
 
 class TriePrinter;
@@ -63,8 +74,7 @@ class TrieBuilder : public TrieBuilderBase {
   using Node = Trie<ValueT>::Node;
   friend class TriePrinter;
 
-  std::unique_ptr<Trie<ValueT>::Node> createNewNode(SemiStringView key,
-                                                    ValueT &&value);
+  Trie<ValueT>::Node *createNewNode(SemiStringView key, ValueT &&value);
   void addLazyKey(Node *node, LazyKey &&lazy_key) {
     size_t shared_pref_len = node->str.length();
     auto &key = lazy_key.key;
@@ -108,7 +118,7 @@ public:
 
   void insert_impl(size_t prefix_len, SemiStringView &&key, ValueT value) {
     if (prefix_len == 0) {
-      curr_node_ = trie_->root_.get();
+      curr_node_ = trie_->root_;
       curr_length_ = 0;
       curr_depth_ = 0;
     } else {
@@ -155,8 +165,7 @@ public:
         if (curr_skip_pref_len + same_len < curr_node_->str.length()) {
           // Split curr_node_->str into two parts and create a new node for the
           // second part
-          auto new_node_u = std::make_unique<Node>();
-          auto new_node = new_node_u.get();
+          auto new_node = trie_->createNode();
           new_node->str =
               curr_node_->str.substr(0, curr_skip_pref_len + same_len);
           new_node->parent = curr_node_->parent;
@@ -167,9 +176,9 @@ public:
           curr_node_->parent = new_node;
           curr_node_->pdep += curr_skip_pref_len + same_len;
 
-          std::swap(new_node->parent->children[new_node->str[0]], new_node_u);
-          DCHECK_EQ(new_node_u.get(), curr_node_);
-          new_node->children[new_node_u->str[0]] = std::move(new_node_u);
+          new_node->parent->children[new_node->str[0]] = new_node;
+          // DCHECK_EQ(new_node, curr_node_);
+          new_node->children[curr_node_->str[0]] = curr_node_;
 
           curr_length_ = curr_node_->pdep;
           curr_node_ = new_node;
@@ -185,8 +194,7 @@ public:
       } else if (curr_node_->children[key[key_i]] == nullptr) {
         // Create a new node for the remaining suffix of the key
         auto new_node = (curr_node_->children[key[key_i]] = createNewNode(
-                             key.substr_tail(key_i), std::move(value)))
-                            .get();
+                             key.substr_tail(key_i), std::move(value)));
         curr_depth_++;
         curr_length_ += new_node->str.length();
         curr_node_ = new_node;
@@ -194,7 +202,7 @@ public:
         return;
       } else {
         // Move to the child node
-        curr_node_ = curr_node_->children[key[key_i]].get();
+        curr_node_ = curr_node_->children[key[key_i]];
         curr_length_ += curr_node_->str.length();
         curr_depth_++;
       }
@@ -213,10 +221,9 @@ public:
 
 private:
   void reset() {
-    trie_->root_ = std::make_unique<Node>();
+    trie_ = std::make_unique<Trie<ValueT>>();
     trie_->root_->pdep = 0;
-    trie_->value_num_ = 0;
-    curr_node_ = trie_->root_.get();
+    curr_node_ = trie_->root_;
     curr_length_ = 0;
     curr_depth_ = 0;
   };
@@ -257,12 +264,27 @@ class TriePrinter {
 
 public:
   TriePrinter(std::unique_ptr<Trie<ValueT>> &&trie) : trie_(std::move(trie)) {
-    prefix_stack_.emplace(trie_->root_.get(), 0);
+    prefix_stack_.emplace(trie_->root_, 0);
+  }
+
+  void presort() {
+    CHECK(!is_presorted_);
+    is_presorted_ = true;
+    node_lazy_keys_.resize(trie_->node_num_);
+    for (auto &node : trie_->node_pool_) {
+      if (node->is_lazy_node) {
+        if ((node->pdep + node->str.length()) % 2 == 1) {
+          node->str = node->str.substr(0, node->str.length() - 1);
+        }
+        handleLazyNode(node.get(), node_lazy_keys_[node->id]);
+      }
+    }
   }
 
   bool hasNext() const { return !prefix_stack_.empty(); }
 
   bool next(size_t *prefix_len, std::string *key, int *values) {
+    CHECK(is_presorted_);
     if (!lazy_keys_.empty()) {
       *prefix_len = prefix_str_len_ / kTranF;
       *key = std::move(lazy_keys_.back().first);
@@ -283,7 +305,7 @@ public:
       for (; *idx < kElementNum && node->children[*idx] == nullptr; ++(*idx))
         ;
       if (*idx < kElementNum) {
-        node = node->children[*idx].get();
+        node = node->children[*idx];
         ++(*idx);
         prefix_stack_.emplace(node, 0);
         suf_str.append(node->str);
@@ -321,7 +343,8 @@ public:
 
     if (node->is_lazy_node) {
       *idx = kElementNum; // so that next time will pop this node
-      handleLazyNode(node, suf_str);
+      // handleLazyNode(node, lazy_keys_);
+      lazy_keys_ = std::move(node_lazy_keys_[node->id]);
 
       std::move(suf_str).toString(key, curr_last);
       key->append(lazy_keys_.back().first);
@@ -340,14 +363,11 @@ public:
   auto valueNum() const { return trie_->value_num_; }
 
 private:
-  void handleLazyNode(Node *node, SemiString &suf_str) {
-    DCHECK(lazy_keys_.empty());
-    lazy_keys_.reserve(node->lazy_keys.size());
+  void handleLazyNode(Node *node,
+                      std::vector<std::pair<std::string, ValueT>> &lazy_keys) {
+    DCHECK(lazy_keys.empty());
+    lazy_keys.reserve(node->lazy_keys.size());
     auto pre_len = node->str.length();
-    if (prefix_str_len_ % 2 == 1) {
-      suf_str.pop_back(1);
-      --pre_len;
-    }
     // notice: pre_len might be 0
     std::string key;
     for (auto &lazy_key : node->lazy_keys) {
@@ -355,15 +375,15 @@ private:
       if (key_i <= 0) {
         std::move(SemiString(lazy_key.key.substr_tail(-key_i)))
             .toString(&key, 0);
-        lazy_keys_.emplace_back(std::move(key), std::move(lazy_key.value));
+        lazy_keys.emplace_back(std::move(key), std::move(lazy_key.value));
       } else {
         DCHECK(key_i % 2 == 0);
         lazy_key.key.to_string(&key, 0);
-        auto str = lazy_keys_.back().first.substr(0, key_i / kTranF) + key;
-        lazy_keys_.emplace_back(std::move(str), std::move(lazy_key.value));
+        auto str = lazy_keys.back().first.substr(0, key_i / kTranF) + key;
+        lazy_keys.emplace_back(std::move(str), std::move(lazy_key.value));
       }
     }
-    std::sort(lazy_keys_.begin(), lazy_keys_.end(),
+    std::sort(lazy_keys.begin(), lazy_keys.end(),
               [](auto &x, auto &y) { return x.first > y.first; });
   }
 
@@ -374,7 +394,9 @@ private:
   size_t prefix_str_len_ = 0;
   uint8_t last_prefix_semichar_ = 0;
 
+  bool is_presorted_{false};
   std::vector<std::pair<std::string, ValueT>> lazy_keys_;
+  std::vector<std::vector<std::pair<std::string, ValueT>>> node_lazy_keys_;
 };
 
 } // namespace whippet_sort::trie

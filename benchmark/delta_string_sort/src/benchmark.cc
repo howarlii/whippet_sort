@@ -29,7 +29,7 @@ using namespace whippet_sort;
 DEFINE_string(input_file,
               std::string(PROJECT_SOURCE_DIR) + "/data/input-2e5-100.parquet",
               "Input file path");
-DEFINE_int32(sort_col_idx, 1, "Column index to sort by");
+DEFINE_int32(sort_col_idx, 2, "Column index to sort by");
 
 DEFINE_bool(hi_arrow, false, "Run high-level Arrow sorting benchmark");
 DEFINE_bool(low_arrow, false, "Run low-level Arrow sorting benchmark");
@@ -57,10 +57,16 @@ int main(int argc, char *argv[]) {
   // Use the input_file flag
   std::string input_file = FLAGS_input_file;
 
+  std::cout << "# input_file: " << input_file << ", col_idx: " << col_idx
+            << std::endl;
+  std::cout << "# trie_lazy_dep_lmt: " << FLAGS_trie_lazy_dep_lmt
+            << ", trie_lazy_key_burst_lmt: " << FLAGS_trie_lazy_key_burst_lmt
+            << std::endl;
+
   // Check if any flags were set, if not, run all benchmarks
-  bool run_all = !FLAGS_hi_arrow && !FLAGS_low_arrow && !FLAGS_trie &&
-                 !FLAGS_trie_v2 && !FLAGS_trie_v2_bfs;
-  if (FLAGS_hi_arrow || run_all) {
+  bool run_all =
+      !FLAGS_low_arrow && !FLAGS_trie && !FLAGS_trie_v2 && !FLAGS_trie_v2_bfs;
+  if (FLAGS_hi_arrow) {
     // Benchmark Arrow sorting
     std::vector<std::function<std::string()>> steps;
     std::unique_ptr<whippet_sort::ParquetSorterArrow> sorter;
@@ -121,7 +127,6 @@ int main(int argc, char *argv[]) {
     config.lazy_key_burst_lmt = FLAGS_trie_lazy_key_burst_lmt;
 
     std::vector<std::function<std::string()>> steps;
-    steps.push_back([&]() { return ""; }); // for align output
     steps.push_back([&]() {
       Utils::drop_file_cache(input_file);
       sorter = std::make_unique<whippet_sort::ParquetSorterTrie>(input_file,
@@ -129,6 +134,10 @@ int main(int argc, char *argv[]) {
       sorter->set_trie_config(config);
       auto idx_array = sorter->sort_by_column();
       return "read+build";
+    });
+    steps.push_back([&]() {
+      sorter->pre_sort();
+      return "pre-sort";
     });
     steps.push_back([&]() {
       sorter->generate_result();

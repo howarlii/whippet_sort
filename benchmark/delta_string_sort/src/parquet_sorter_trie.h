@@ -9,6 +9,7 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <parquet/types.h>
 #include <stack>
 #include <stdexcept>
 #include <string>
@@ -76,24 +77,28 @@ public:
     return sort_index_;
   }
 
+  void pre_sort() {
+    printer_ = std::make_unique<trie::TriePrinter>(std::move(trie_));
+    printer_->presort();
+  }
+
   void generate_result() override {
-    trie::TriePrinter printer(std::move(trie_));
     arrow::Int32Builder idx_builder;
 
-    if (auto ret = idx_builder.Reserve(printer.valueNum()); !ret.ok()) {
+    if (auto ret = idx_builder.Reserve(printer_->valueNum()); !ret.ok()) {
       LOG(ERROR) << ret.message();
     }
 
-    ::arrow::StringBuilder str_builder;
-    if (!str_builder.Reserve(printer.valueNum()).ok()) {
+    ::arrow::LargeStringBuilder str_builder;
+    if (!str_builder.Reserve(printer_->valueNum()).ok()) {
       LOG(ERROR) << "Failed to reserve space for string builder.";
     }
     std::string last_str;
-    while (printer.hasNext()) {
+    while (printer_->hasNext()) {
       size_t prefix_len;
       std::string key;
       int values;
-      bool ret = printer.next(&prefix_len, &key, &values);
+      bool ret = printer_->next(&prefix_len, &key, &values);
       if (!ret)
         break;
 
@@ -127,7 +132,7 @@ public:
 
     std::string prev_str = "";
     for (int chunk_i = 0; chunk_i < sorted_column_->num_chunks(); ++chunk_i) {
-      auto str_array = std::static_pointer_cast<arrow::StringArray>(
+      auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(
           sorted_column_->chunk(chunk_i));
       for (int64_t i = 0; i < str_array->length(); ++i) {
         std::string curr_str = str_array->GetString(i);
@@ -161,15 +166,18 @@ protected:
 
   trie::TrieConfig trie_config_;
   std::unique_ptr<trie::Trie<int>> trie_;
+  std::unique_ptr<trie::TriePrinter> printer_;
 };
 
-class ParquetSorterTrieArrow : public ParquetSorterTrie {
+class ParquetSorterTrieArrow : public ParquetSorterIf {
 public:
   // using DType = parquet::ByteArray;
   using DType = parquet::ByteArrayType;
 
   ParquetSorterTrieArrow(string input_file, uint32_t col_idx)
-      : ParquetSorterTrie(std::move(input_file), col_idx) {}
+      : ParquetSorterIf(std::move(input_file), col_idx) {
+    open_file();
+  }
 
   void read_all() {
     // Sort the column with the given index and return the sorted index list.
@@ -182,28 +190,35 @@ public:
       LOG(ERROR) << "Column is not a BYTE_ARRAY column.";
     }
 
-    std::vector<std::shared_ptr<::arrow::Array>> all_chunks;
+    auto array_builder = std::make_shared<::arrow::LargeStringBuilder>();
 
+    std::vector<parquet::ByteArray> values(1e5);
     for (int i = 0; i < metadata_->num_row_groups(); ++i) {
       auto row_group = file_reader_->RowGroup(i);
-      auto pager = row_group->GetColumnPageReader(col_idx_);
+      auto column_reader = row_group->Column(col_idx_);
 
-      auto col_sorter = std::make_unique<hack_parquet::ColumnTrieSorter<DType>>(
-          column_descr, std::move(pager), nullptr);
-
-      col_sorter->ReadAll(metadata_->RowGroup(i)->num_rows());
-
-      auto trie_builder = std::move(col_sorter->GetTrieBuilder());
-
-      CHECK_EQ(trie_builder, nullptr) << "???";
-
-      if (auto chunks = col_sorter->GetChunks(); !chunks.empty()) {
-        all_chunks.insert(all_chunks.end(), chunks.begin(), chunks.end());
+      auto byte_array_reader =
+          static_cast<parquet::ByteArrayReader *>(column_reader.get());
+      while (byte_array_reader->HasNext()) {
+        int64_t values_read;
+        // Read one value at a time. The number of rows read is returned.
+        // values_read contains the number of non-null rows
+        int64_t rows_read = byte_array_reader->ReadBatch(
+            values.size(), nullptr, nullptr, values.data(), &values_read);
+        DCHECK_EQ(rows_read, values_read);
+        for (int64_t i = 0; i < values_read; ++i) {
+          if (auto ret = array_builder->Append(values[i].ptr, values[i].len);
+              !ret.ok()) {
+            LOG(ERROR) << ret.message();
+          }
+        }
       }
     }
-
-    origin_column_ =
-        std::make_shared<::arrow::ChunkedArray>(std::move(all_chunks));
+    std::shared_ptr<::arrow::Array> array;
+    if (auto ret = array_builder->Finish(&array); !ret.ok()) {
+      LOG(ERROR) << ret.message();
+    }
+    origin_column_ = std::make_shared<::arrow::ChunkedArray>(array);
   }
 
   std::shared_ptr<arrow::Array> sort_by_column() override {
@@ -233,7 +248,46 @@ public:
     CHECK(false) << "Sort index is not available.";
   }
 
+  bool check_correctness() {
+    if (!sorted_column_ || sorted_column_->num_chunks() == 0) {
+      LOG(ERROR) << "Sorted column is empty or not initialized.";
+      return false;
+    }
+
+    std::string prev_str = "";
+    for (int chunk_i = 0; chunk_i < sorted_column_->num_chunks(); ++chunk_i) {
+      auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(
+          sorted_column_->chunk(chunk_i));
+      for (int64_t i = 0; i < str_array->length(); ++i) {
+        std::string curr_str = str_array->GetString(i);
+        if (curr_str < prev_str) {
+          LOG(ERROR) << "Sorting error at index " << i << ": " << curr_str
+                     << " < " << prev_str;
+          return false;
+        }
+        prev_str = curr_str;
+      }
+    }
+
+    return true;
+  }
+
 protected:
+  void open_file() {
+    std::shared_ptr<arrow::io::RandomAccessFile> file;
+    auto state = arrow::io::ReadableFile::Open(input_file_);
+    if (!state.ok()) {
+      LOG(INFO) << "Failed to open input file.";
+      throw std::runtime_error("Failed to open input parquet file");
+    }
+    file = state.ValueOrDie();
+    file_reader_ = parquet::ParquetFileReader::Open(file);
+    metadata_ = file_reader_->metadata();
+  }
+
+  unique_ptr<parquet::ParquetFileReader> file_reader_;
+  shared_ptr<parquet::FileMetaData> metadata_;
+
   std::shared_ptr<arrow::ChunkedArray> origin_column_;
 };
 

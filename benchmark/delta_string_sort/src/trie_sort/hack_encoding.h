@@ -8,10 +8,11 @@
 #include <unordered_map>
 
 #include "arrow/util/bit_block_counter.h"
-#include "arrow/util/bit_stream_utils.h"
-// #include "arrow/util/byte_stream_split_internal.h"
+// #include "arrow/util/bit_stream_utils.h"
+#include "/workspace/whippet_sort/third_party/arrow/cpp/src/arrow/util/bit_stream_utils_internal.h"
 #include "arrow/util/checked_cast.h"
 #include "arrow/util/int_util_overflow.h"
+#include "arrow/util/spaced.h"
 #include "arrow/util/ubsan.h"
 #include "arrow/visit_data_inline.h"
 #include "parquet/exception.h"
@@ -20,7 +21,6 @@
 #include "parquet/types.h"
 #include <arrow/io/api.h>
 #include <arrow/result.h>
-#include <arrow/util/bit_stream_utils.h>
 #include <arrow/util/logging.h>
 #include <fmt/format.h>
 #include <glog/logging.h>
@@ -78,8 +78,30 @@ protected:
 // DeltaBitPackDecoder, copy from ARROW src/parquet/encoding.cc
 
 template <typename DType>
-class DeltaBitPackDecoder : public DecoderImpl,
-                            virtual public TypedDecoder<DType> {
+class TypedDecoderImpl : virtual public TypedDecoder<DType> {
+public:
+  using T = typename DType::c_type;
+
+  int DecodeSpaced(T *buffer, int num_values, int null_count,
+                   const uint8_t *valid_bits,
+                   int64_t valid_bits_offset) override {
+    if (null_count > 0) {
+      int values_to_read = num_values - null_count;
+      int values_read = this->Decode(buffer, values_to_read);
+      if (values_read != values_to_read) {
+        throw ParquetException(
+            "Number of values / definition_levels read did not match");
+      }
+
+      return ::arrow::util::internal::SpacedExpand<T>(
+          buffer, num_values, null_count, valid_bits, valid_bits_offset);
+    } else {
+      return this->Decode(buffer, num_values);
+    }
+  }
+};
+template <typename DType>
+class DeltaBitPackDecoder : public DecoderImpl, public TypedDecoderImpl<DType> {
 public:
   typedef typename DType::c_type T;
   using UT = std::make_unsigned_t<T>;
@@ -461,6 +483,12 @@ public:
 
   int Decode(ByteArray *buffer, int max_values, int idx_offset) {
     return this->GetInternal(buffer, max_values, idx_offset);
+  }
+  int DecodeSpaced(ByteArray *buffer, int num_values, int null_count,
+                   const uint8_t *valid_bits,
+                   int64_t valid_bits_offset) override {
+
+    throw ParquetException("Not implemented for TrieSortDecoder");
   }
 
   void SetTrieBuilder(TrieBuilderBase *builder) {

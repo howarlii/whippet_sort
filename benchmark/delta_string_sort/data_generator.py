@@ -82,9 +82,9 @@ df = pd.DataFrame({
 
 # Define the schema with pyarrow
 schema = pa.schema([
-    ('string_col0', pa.string()),
-    ('string_col1', pa.string()),
-    ('string_col2', pa.string()),
+    ('string_col0', pa.large_string()),
+    ('string_col1', pa.large_string()),
+    ('string_col2', pa.large_string()),
     ('int_col', pa.int32()),
 ])
 

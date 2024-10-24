@@ -7,7 +7,7 @@ install_dir=${third_party_dir}/install
 export CC=clang
 export CXX=clang++
 
-PARALLEL=12 # make parallelism
+PARALLEL=120 # make parallelism
 CMAKE_GENERATOR=Ninja
 COMMON_CMAKE_FLAGS=" \
   -DCMAKE_INSTALL_PREFIX=${install_dir} \
@@ -29,7 +29,7 @@ FOLLY_SOURCE=folly-v2022.11.14.00
 FOLLY_SHA256="b249436cb61b6dfd5288093565438d8da642b07ae021191a4042b221bc1bdc0e"
 
 # arrow
-ARROW_VERSION=release-15.0.0-rc0
+ARROW_VERSION=release-18.0.0-rc0
 
 # GTest
 GTEST_VERSION=v1.15.2

@@ -66,7 +66,7 @@ public:
 
   SemiStringView substr(size_t pos, size_t len) const {
     DCHECK_LE(pos + len, length_);
-    if (length_ == 0) {
+    if (length_ == 0 || 0 == len) {
       return SemiStringView();
     }
     if (len == length_)

@@ -16,9 +16,9 @@
 namespace whippet_sort::trie {
 
 // template <typename ValueT>
-std::unique_ptr<Trie<int>::Node> TrieBuilder::createNewNode(SemiStringView key,
-                                                            ValueT &&value) {
-  auto new_node = std::make_unique<Node>();
+Trie<int>::Node *TrieBuilder::createNewNode(SemiStringView key,
+                                            ValueT &&value) {
+  auto new_node = trie_->createNode();
 
   new_node->parent = curr_node_;
   new_node->pdep = curr_length_;

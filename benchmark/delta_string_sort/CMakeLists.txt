@@ -48,3 +48,17 @@ add_compile_definitions(PROJECT_SOURCE_DIR=\"${PROJECT_SOURCE_DIR}\")
 
 add_subdirectory(src)
 add_subdirectory(test)
+
+add_executable(data_generator data_generator.cpp)
+target_include_directories(benchmark PRIVATE ${PROJECT_SOURCE_DIR}/../../third_party/install/arrow/include)
+target_link_directories(benchmark PRIVATE ${PROJECT_SOURCE_DIR}/../../third_party/install/arrow/lib)
+
+# Link libraries to the benchmark target
+target_link_libraries(
+  data_generator
+  PRIVATE Arrow::arrow_static
+          Parquet::parquet_static
+          Threads::Threads
+          glog::glog
+          fmt::fmt
+)

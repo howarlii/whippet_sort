@@ -69,8 +69,7 @@ public:
 
       // Hash the current chunk (use compute API or your own logic)
       if (chunk->type_id() == arrow::Type::STRING) {
-        std::shared_ptr<arrow::StringArray> array =
-            std::static_pointer_cast<arrow::StringArray>(chunk);
+        auto array = std::static_pointer_cast<arrow::LargeStringArray>(chunk);
         for (int64_t j = 0; j < array->length(); ++j) {
           if (!array->IsNull(j)) {
             final_hash = Utils::hashCombine(final_hash, array->Value(j));
