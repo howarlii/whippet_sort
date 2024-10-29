@@ -38,7 +38,7 @@ DEFINE_bool(trie, false, "Run trie-based sorting benchmark");
 DEFINE_bool(trie_v2, false, "Run trie-based sorting benchmark v2");
 DEFINE_bool(trie_v2_bfs, false, "Run trie-based sorting benchmark v2 bfs");
 
-DEFINE_int32(trie_lazy_dep_lmt, 5, "Trie lazy depth limit");
+DEFINE_int32(trie_lazy_dep_lmt, 4, "Trie lazy depth limit");
 DEFINE_int32(trie_lazy_key_burst_lmt, 2048, "Trie lazy key burst limit");
 
 int main(int argc, char *argv[]) {
@@ -91,11 +91,11 @@ int main(int argc, char *argv[]) {
 
   if (FLAGS_low_arrow || run_all) {
     std::vector<std::function<std::string()>> steps;
-    std::unique_ptr<whippet_sort::ParquetSorterTrieArrow> sorter;
+    std::unique_ptr<whippet_sort::ParquetSorterArrow> sorter;
     steps.push_back([&]() {
       Utils::drop_file_cache(input_file);
       sorter =
-          std::make_unique<whippet_sort::ParquetSorterTrieArrow>(input_file, 0);
+          std::make_unique<whippet_sort::ParquetSorterArrow>(input_file, 0);
       sorter->read_all();
       return "read";
     });
@@ -105,9 +105,6 @@ int main(int argc, char *argv[]) {
     });
     steps.push_back([&]() {
       sorter->generate_result();
-      if (FLAGS_debug) {
-        sorter->check_correctness();
-      }
       return "generate result";
     });
     auto [arrow_median, arrow_average] =
@@ -137,10 +134,11 @@ int main(int argc, char *argv[]) {
       return "pre-sort";
     });
     steps.push_back([&]() {
+      sorter->print_trie();
+      return "print-trie";
+    });
+    steps.push_back([&]() {
       sorter->generate_result();
-      if (FLAGS_debug) {
-        sorter->check_correctness();
-      }
       return "generate result";
     });
     auto [median, average] =
@@ -148,6 +146,9 @@ int main(int argc, char *argv[]) {
 
     std::cout << "# Whippet sorting (Trie) - Median: " << median
               << "ms, Average: " << average << "ms" << std::endl;
+    if (FLAGS_debug) {
+      sorter->check_correctness();
+    }
   }
 
   if (FLAGS_trie_v2 || run_all) {
@@ -167,13 +168,17 @@ int main(int argc, char *argv[]) {
     });
     steps.push_back([&]() {
       sorter->pre_sort();
+      if (FLAGS_debug) {
+        sorter->statistics();
+      }
       return "pre-sort";
     });
     steps.push_back([&]() {
+      sorter->print_trie();
+      return "print-trie";
+    });
+    steps.push_back([&]() {
       sorter->generate_result();
-      if (FLAGS_debug) {
-        sorter->check_correctness();
-      }
       return "generate result";
     });
     auto [median, average] =
@@ -181,6 +186,9 @@ int main(int argc, char *argv[]) {
 
     std::cout << "# Whippet sorting (TrieV2) - Median: " << median
               << "ms, Average: " << average << "ms" << std::endl;
+    if (FLAGS_debug) {
+      sorter->check_correctness();
+    }
   }
 
   if (FLAGS_trie_v2_bfs || run_all) {
@@ -201,13 +209,17 @@ int main(int argc, char *argv[]) {
     });
     steps.push_back([&]() {
       sorter->pre_sort();
+      if (FLAGS_debug) {
+        sorter->statistics();
+      }
       return "pre-sort";
     });
     steps.push_back([&]() {
+      sorter->print_trie();
+      return "print-trie";
+    });
+    steps.push_back([&]() {
       sorter->generate_result();
-      if (FLAGS_debug) {
-        sorter->check_correctness();
-      }
       return "generate result";
     });
     auto [median, average] =
@@ -215,6 +227,9 @@ int main(int argc, char *argv[]) {
 
     std::cout << "# Whippet sorting (TrieV2Bfs) - Median: " << median
               << "ms, Average: " << average << "ms" << std::endl;
+    if (FLAGS_debug) {
+      sorter->check_correctness();
+    }
   }
 
   gflags::ShutDownCommandLineFlags();

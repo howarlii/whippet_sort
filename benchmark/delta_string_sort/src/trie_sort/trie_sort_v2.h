@@ -5,7 +5,9 @@
 #include <cstddef>
 #include <deque>
 #include <functional>
+#include <iostream>
 #include <memory>
+#include <numeric>
 #include <stack>
 #include <string>
 #include <string_view>
@@ -426,6 +428,36 @@ public:
 
   void registerFunc(FuncT func) { func_ = std::move(func); }
 
+  void statistics() {
+    std::vector<size_t> node_ch_sizes;
+    node_ch_sizes.reserve(trie_->node_num * 2);
+    for (auto &node : trie_->node_pool_) {
+      if (node->is_lazy) {
+        continue;
+      }
+      node_ch_sizes.push_back(node->children_l.size());
+      node_ch_sizes.push_back(node->children_g.size());
+    }
+    std::sort(node_ch_sizes.begin(), node_ch_sizes.end(),
+              std::greater<size_t>());
+
+    std::cout << "node children size distribution: " << std::endl;
+    std::cout << "max: " << node_ch_sizes.front() << std::endl;
+    for (size_t l = 0, r = 1; l < 100;) {
+      auto pos_l = node_ch_sizes.size() * (l) / 100;
+      auto pos_r = node_ch_sizes.size() * r / 100;
+      auto sum = std::accumulate(node_ch_sizes.begin() + pos_l,
+                                 node_ch_sizes.begin() + pos_r, size_t(0));
+      std::cout << fmt::format("~{:>3}%: {:.2f}", r,
+                               sum * 1.0 / (pos_r - pos_l))
+                << std::endl;
+      l = r;
+      (r < 10 ? r += 2 : r += 10);
+    }
+    auto median = node_ch_sizes[node_ch_sizes.size() / 2];
+    std::cout << "median of node children size: " << median << std::endl;
+  }
+
   void preSort() {
     CHECK(!pre_sorted);
     node_lazy_keys_.resize(trie_->node_num);
@@ -494,7 +526,6 @@ public:
             prefix_.append(node->str.data() + node_prefix_len,
                            v_len - node_prefix_len);
             node_prefix_len = v_len;
-            // func_(0, prefix_, value);
             print_string(value);
           } else {
             node->children_l.pop_back();
@@ -554,9 +585,10 @@ private:
   }
 
   void print_string(int value) {
-    func_(last_prefix_len_, prefix_, value);
-    last_prefix_len_ += prefix_.length();
+    auto len = prefix_.length();
+    func_(last_prefix_len_, std::move(prefix_), value);
     prefix_.clear();
+    last_prefix_len_ += len;
   }
 
   std::unique_ptr<Trie> trie_;

@@ -12,12 +12,13 @@
 #include <gflags/gflags.h>
 #include <thread>
 
-DEFINE_string(n_rows, "2e5", "Number of rows (can be in scientific notation)");
+DEFINE_string(n_rows, "10", "Number of rows (can be in scientific notation)");
 DEFINE_int32(str_len_avg, 100, "Average length of strings");
+DEFINE_bool(debug, false, "debug mode");
 
 std::random_device rd;
 std::mt19937 mt_generator(rd());
-const int num_threads = std::min<int>(32, std::thread::hardware_concurrency());
+const int kNumThreads = std::min<int>(32, std::thread::hardware_concurrency());
 
 // Function to convert scientific notation string to int
 int scientific_to_int(const std::string &s) {
@@ -38,15 +39,14 @@ std::string generate_random_string(std::mt19937 &mt_generator, int length) {
   return random_string;
 }
 
-std::string
-generate_random_string(std::mt19937 &mt_generator, int length,
-                       const std::vector<std::string> &block_lengths) {
-  std::uniform_int_distribution<> distribution(0, block_lengths.size() - 1);
+std::string generate_random_string(std::mt19937 &mt_generator, int bnum,
+                                   const std::vector<std::string> &blocks) {
+  std::uniform_int_distribution<> distribution(0, blocks.size() - 1);
 
   std::string random_string;
-  random_string.reserve(length * block_lengths.front().size());
-  for (int i = 0; i < length; ++i) {
-    random_string += block_lengths[distribution(mt_generator)];
+  random_string.reserve(bnum * blocks.front().size());
+  for (int i = 0; i < bnum; ++i) {
+    random_string += blocks[distribution(mt_generator)];
   }
   return random_string;
 }
@@ -58,6 +58,7 @@ generate_rnd_str_array(int n, int str_avg_len) {
   int max_len = static_cast<int>(1.2 * str_avg_len);
 
   std::vector<std::thread> threads;
+  auto num_threads = std::min(kNumThreads, n / 1000 + 1);
   std::vector<std::vector<std::string>> thread_strings(num_threads);
 
   for (int t = 0; t < num_threads; ++t) {
@@ -99,6 +100,7 @@ generate_rnd_pref_str_array(int n, int str_avg_len) {
   int max_len = static_cast<int>(1.2 * str_avg_len);
 
   std::vector<std::thread> threads;
+  auto num_threads = std::min(kNumThreads, n / 1000 + 1);
   std::vector<std::vector<std::string>> thread_strings(num_threads);
 
   for (int t = 0; t < num_threads; ++t) {
@@ -144,36 +146,37 @@ generate_block_pref_str_array(int n, int str_avg_len) {
   int block_len = 10;
   int block_num = 1000;
   // Define min and max lengths based on 0.8 * str_avg_len and 1.2 * str_avg_len
-  int min_len = static_cast<int>(0.8 * str_avg_len / block_len);
-  int max_len = static_cast<int>(1.2 * str_avg_len / block_len);
+  int min_bnum = static_cast<int>(0.8 * str_avg_len / block_len);
+  int max_bnum = static_cast<int>(1.2 * str_avg_len / block_len);
 
-  std::vector<std::string> block_lengths;
-  block_lengths.reserve(block_num);
+  std::vector<std::string> blocks;
+  blocks.reserve(block_num);
   for (int i = 0; i < block_num; ++i) {
-    block_lengths.push_back(generate_random_string(mt_generator, block_len));
+    blocks.push_back(generate_random_string(mt_generator, block_len));
   }
 
   std::vector<std::thread> threads;
+  auto num_threads = std::min(kNumThreads, n / 1000 + 1);
   std::vector<std::vector<std::string>> thread_strings(num_threads);
 
   for (int t = 0; t < num_threads; ++t) {
     threads.emplace_back([&, t, &strs = thread_strings[t]]() {
       std::mt19937 gen(rd() + t);
-      std::uniform_int_distribution<> local_length_distribution(min_len,
-                                                                max_len);
+      std::uniform_int_distribution<> local_length_distribution(min_bnum,
+                                                                max_bnum);
       std::uniform_int_distribution<int> int_distribution;
       int start = t * n / num_threads;
       int end = (t + 1) * n / num_threads;
       strs.reserve(end - start);
       std::string last_str;
       for (int i = start; i < end; ++i) {
-        size_t len = local_length_distribution(gen);
-        len = len / block_len * block_len;
-        int prefix_length =
-            int_distribution(gen) % (std::min(len, last_str.length()) + 1);
-        last_str =
-            last_str.substr(0, prefix_length) +
-            generate_random_string(gen, len - prefix_length, block_lengths);
+        size_t str_bnum = local_length_distribution(gen);
+        int prefix_bnum =
+            int_distribution(gen) %
+            (std::min(str_bnum, last_str.length() / block_len) + 1);
+
+        last_str.resize(prefix_bnum * block_len);
+        last_str += generate_random_string(gen, str_bnum - prefix_bnum, blocks);
         strs.push_back(last_str);
       }
     });
@@ -219,6 +222,12 @@ int main(int argc, char **argv) {
 
   for (auto &thread : threads) {
     thread.join();
+  }
+  if (FLAGS_debug) {
+    for (auto &col : columns) {
+      std::cout << col->ToString() << std::endl;
+    }
+    return 0;
   }
 
   // Create a schema with one string column

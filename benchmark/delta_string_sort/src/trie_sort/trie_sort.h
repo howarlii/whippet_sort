@@ -295,6 +295,7 @@ public:
 
     if (!hasNext())
       return false;
+    key->clear();
 
     auto &[node_r, idx_r] = prefix_stack_.top();
     Node *node = node_r;

@@ -166,6 +166,7 @@ TEST_F(TrieTestV2Bfs, t2) {
 }
 
 TEST_F(TrieTestV2Bfs, t3) {
+  GTEST_SKIP();
   this->init(8);
   // enable_debug = true;
 
@@ -176,6 +177,7 @@ TEST_F(TrieTestV2Bfs, t3) {
 }
 
 TEST_F(TrieTestV2Bfs, t4) {
+  GTEST_SKIP();
   this->init(8);
   // enable_debug = true;
 

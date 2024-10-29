@@ -9,7 +9,7 @@ target_link_libraries(
 )
 
 # Define include directories and link directories for the target
-add_executable(benchmark benchmark.cc parquet_sorter.cc)
+add_executable(benchmark benchmark.cc)
 target_include_directories(benchmark PRIVATE ${PROJECT_SOURCE_DIR}/../../third_party/install/arrow/include)
 target_link_directories(benchmark PRIVATE ${PROJECT_SOURCE_DIR}/../../third_party/install/arrow/lib)
 
@@ -22,4 +22,5 @@ target_link_libraries(
           glog::glog
           fmt::fmt
           trie_sort
+          parquet_sorter
 )

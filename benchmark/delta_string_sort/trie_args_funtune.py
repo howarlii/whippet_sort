@@ -7,7 +7,7 @@ import subprocess
 import json
 import itertools
 
-data_name = "2e6-200"
+data_name = "2e6-1600"
 data_path = f"./data/input-{data_name}.parquet"
 
 
@@ -18,7 +18,7 @@ def run_benchmark(lazy_dep_lmt, lazy_key_burst_lmt):
         f"--trie_lazy_dep_lmt={lazy_dep_lmt}",
         f"--trie_lazy_key_burst_lmt={lazy_key_burst_lmt}",
         "--sort_col_idx=2",
-        "--trie"
+        "--trie_v2"
     ]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -45,7 +45,7 @@ def run_benchmark(lazy_dep_lmt, lazy_key_burst_lmt):
 
 
 # Define the range of values to test
-lazy_dep_lmt_range = [3, 4, 5, 6]
+lazy_dep_lmt_range = [4]
 lazy_key_burst_lmt_range = [512, 1024, 2048, 4096, 8192, 16384]
 
 results = []
@@ -92,7 +92,7 @@ def draw_plot_tot(path_pref, step_name):
     plt.figure(figsize=(12, 6))
     for dep_lmt in df['lazy_dep_lmt'].unique():
         subset = df[df['lazy_dep_lmt'] == dep_lmt]
-        plt.plot(subset['lazy_key_burst_lmt'], subset['read+sort'] + subset['generate result'],
+        plt.plot(subset['lazy_key_burst_lmt'], subset['read+sort'] + subset['pre-sort'] + subset['print-trie'] + subset['generate result'],
                  marker='o', linestyle='-', label=f'lazy_dep_lmt = {dep_lmt}')
 
     plt.xlabel('Lazy Key Burst Limit (lazy_key_burst_lmt)')

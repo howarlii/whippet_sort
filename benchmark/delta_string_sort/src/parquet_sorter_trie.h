@@ -58,6 +58,7 @@ public:
     if (column_descr->physical_type() != DType::type_num) {
       LOG(ERROR) << "Column is not a BYTE_ARRAY column.";
     }
+    num_rows_ = metadata_->num_rows();
 
     trie::TrieBuilder trie_builder(trie_config_);
     for (int i = 0; i < metadata_->num_row_groups(); ++i) {
@@ -82,18 +83,8 @@ public:
     printer_->presort();
   }
 
-  void generate_result() override {
-    arrow::Int32Builder idx_builder;
-
-    if (auto ret = idx_builder.Reserve(printer_->valueNum()); !ret.ok()) {
-      LOG(ERROR) << ret.message();
-    }
-
-    ::arrow::LargeStringBuilder str_builder;
-    if (!str_builder.Reserve(printer_->valueNum()).ok()) {
-      LOG(ERROR) << "Failed to reserve space for string builder.";
-    }
-    std::string last_str;
+  void print_trie() {
+    results_.reserve(printer_->valueNum());
     while (printer_->hasNext()) {
       size_t prefix_len;
       std::string key;
@@ -102,6 +93,23 @@ public:
       if (!ret)
         break;
 
+      results_.emplace_back(prefix_len, std::move(key), values);
+    }
+  }
+
+  void generate_result() override {
+    arrow::Int32Builder idx_builder;
+    CHECK(!results_.empty());
+    if (auto ret = idx_builder.Reserve(results_.size()); !ret.ok()) {
+      LOG(ERROR) << ret.message();
+    }
+    ::arrow::LargeStringBuilder str_builder;
+    if (!str_builder.Reserve(results_.size()).ok()) {
+      LOG(ERROR) << "Failed to reserve space for string builder.";
+    }
+
+    std::string last_str;
+    for (auto &[prefix_len, key, values] : results_) {
       if (auto ret = idx_builder.Append(values); !ret.ok()) {
         LOG(ERROR) << ret.message();
       }
@@ -130,9 +138,10 @@ public:
       return false;
     }
 
+    CHECK_EQ(num_rows_, sorted_column_->length());
     std::string prev_str = "";
     for (int chunk_i = 0; chunk_i < sorted_column_->num_chunks(); ++chunk_i) {
-      auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(
+      auto str_array = std::dynamic_pointer_cast<arrow::LargeStringArray>(
           sorted_column_->chunk(chunk_i));
       for (int64_t i = 0; i < str_array->length(); ++i) {
         std::string curr_str = str_array->GetString(i);
@@ -167,128 +176,9 @@ protected:
   trie::TrieConfig trie_config_;
   std::unique_ptr<trie::Trie<int>> trie_;
   std::unique_ptr<trie::TriePrinter> printer_;
-};
 
-class ParquetSorterTrieArrow : public ParquetSorterIf {
-public:
-  // using DType = parquet::ByteArray;
-  using DType = parquet::ByteArrayType;
-
-  ParquetSorterTrieArrow(string input_file, uint32_t col_idx)
-      : ParquetSorterIf(std::move(input_file), col_idx) {
-    open_file();
-  }
-
-  void read_all() {
-    // Sort the column with the given index and return the sorted index list.
-    if (col_idx_ >= metadata_->num_columns()) {
-      LOG(ERROR) << "Column index out of range.";
-    }
-
-    auto column_descr = metadata_->schema()->Column(col_idx_);
-    if (column_descr->physical_type() != DType::type_num) {
-      LOG(ERROR) << "Column is not a BYTE_ARRAY column.";
-    }
-
-    auto array_builder = std::make_shared<::arrow::LargeStringBuilder>();
-
-    std::vector<parquet::ByteArray> values(1e5);
-    for (int i = 0; i < metadata_->num_row_groups(); ++i) {
-      auto row_group = file_reader_->RowGroup(i);
-      auto column_reader = row_group->Column(col_idx_);
-
-      auto byte_array_reader =
-          static_cast<parquet::ByteArrayReader *>(column_reader.get());
-      while (byte_array_reader->HasNext()) {
-        int64_t values_read;
-        // Read one value at a time. The number of rows read is returned.
-        // values_read contains the number of non-null rows
-        int64_t rows_read = byte_array_reader->ReadBatch(
-            values.size(), nullptr, nullptr, values.data(), &values_read);
-        DCHECK_EQ(rows_read, values_read);
-        for (int64_t i = 0; i < values_read; ++i) {
-          if (auto ret = array_builder->Append(values[i].ptr, values[i].len);
-              !ret.ok()) {
-            LOG(ERROR) << ret.message();
-          }
-        }
-      }
-    }
-    std::shared_ptr<::arrow::Array> array;
-    if (auto ret = array_builder->Finish(&array); !ret.ok()) {
-      LOG(ERROR) << ret.message();
-    }
-    origin_column_ = std::make_shared<::arrow::ChunkedArray>(array);
-  }
-
-  std::shared_ptr<arrow::Array> sort_by_column() override {
-    arrow::compute::ExecContext exec_ctx_;
-    arrow::compute::SortOptions sort_options;
-    auto ret =
-        arrow::compute::SortIndices(origin_column_, sort_options, &exec_ctx_);
-    if (ret.ok()) {
-      sort_index_ = ret.ValueOrDie();
-    } else {
-      LOG(ERROR) << ret.status().message();
-    }
-
-    return sort_index_;
-  }
-
-  void generate_result() override {
-    if (sort_index_) {
-      arrow::compute::ExecContext exec_ctx;
-      arrow::compute::TakeOptions take_options;
-      auto ret = arrow::compute::Take(origin_column_, sort_index_, take_options,
-                                      &exec_ctx);
-      sorted_column_ = ret.ValueOrDie().chunked_array();
-      return;
-    }
-    // trival all the nodes
-    CHECK(false) << "Sort index is not available.";
-  }
-
-  bool check_correctness() {
-    if (!sorted_column_ || sorted_column_->num_chunks() == 0) {
-      LOG(ERROR) << "Sorted column is empty or not initialized.";
-      return false;
-    }
-
-    std::string prev_str = "";
-    for (int chunk_i = 0; chunk_i < sorted_column_->num_chunks(); ++chunk_i) {
-      auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(
-          sorted_column_->chunk(chunk_i));
-      for (int64_t i = 0; i < str_array->length(); ++i) {
-        std::string curr_str = str_array->GetString(i);
-        if (curr_str < prev_str) {
-          LOG(ERROR) << "Sorting error at index " << i << ": " << curr_str
-                     << " < " << prev_str;
-          return false;
-        }
-        prev_str = curr_str;
-      }
-    }
-
-    return true;
-  }
-
-protected:
-  void open_file() {
-    std::shared_ptr<arrow::io::RandomAccessFile> file;
-    auto state = arrow::io::ReadableFile::Open(input_file_);
-    if (!state.ok()) {
-      LOG(INFO) << "Failed to open input file.";
-      throw std::runtime_error("Failed to open input parquet file");
-    }
-    file = state.ValueOrDie();
-    file_reader_ = parquet::ParquetFileReader::Open(file);
-    metadata_ = file_reader_->metadata();
-  }
-
-  unique_ptr<parquet::ParquetFileReader> file_reader_;
-  shared_ptr<parquet::FileMetaData> metadata_;
-
-  std::shared_ptr<arrow::ChunkedArray> origin_column_;
+  // (prefix_len, key, value)
+  std::vector<std::tuple<size_t, std::string, int>> results_;
 };
 
 } // namespace whippet_sort

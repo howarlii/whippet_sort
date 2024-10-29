@@ -53,6 +53,7 @@ public:
     if (column_descr->physical_type() != DType::type_num) {
       LOG(ERROR) << "Column is not a BYTE_ARRAY column.";
     }
+    num_rows_ = metadata_->num_rows();
 
     DCHECK(trie_builder_);
     for (int i = 0; i < metadata_->num_row_groups(); ++i) {
@@ -77,29 +78,39 @@ public:
     printer_->preSort();
   }
 
+  void statistics() { printer_->statistics(); }
+
+  void print_trie() {
+    results_.reserve(printer_->valueNum());
+    auto f = [&](size_t prefix_len, std::string key, int value) {
+      results_.emplace_back(prefix_len, std::move(key), value);
+    };
+    printer_->registerFunc(std::move(f));
+    printer_->print();
+  }
+
   void generate_result() override {
+    CHECK(!results_.empty());
     arrow::Int32Builder idx_builder;
-    if (auto ret = idx_builder.Reserve(printer_->valueNum()); !ret.ok()) {
+    if (auto ret = idx_builder.Reserve(results_.size()); !ret.ok()) {
       LOG(ERROR) << ret.message();
     }
     ::arrow::LargeStringBuilder str_builder;
-    if (!str_builder.Reserve(printer_->valueNum()).ok()) {
+    if (!str_builder.Reserve(results_.size()).ok()) {
       LOG(ERROR) << "Failed to reserve space for string builder.";
     }
 
     std::string last_str;
-    auto f = [&](size_t prefix_len, std::string key, int value) {
+    for (auto &[prefix_len, key, value] : results_) {
       if (auto ret = idx_builder.Append(value); !ret.ok()) {
         LOG(ERROR) << ret.message();
       }
-      last_str = last_str.substr(0, prefix_len) + key;
+      last_str.resize(prefix_len);
+      last_str += key;
       if (auto ret = str_builder.Append(last_str); !ret.ok()) {
         LOG(ERROR) << ret.message();
       }
     };
-
-    printer_->registerFunc(f);
-    printer_->print();
 
     if (auto ret = idx_builder.Finish(&sort_index_); !ret.ok()) {
       LOG(ERROR) << ret.message();
@@ -118,6 +129,8 @@ public:
       return false;
     }
 
+    CHECK_EQ(num_rows_, sorted_column_->length());
+
     std::string prev_str = "";
     for (int chunk_i = 0; chunk_i < sorted_column_->num_chunks(); ++chunk_i) {
       auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(
@@ -125,8 +138,8 @@ public:
       for (int64_t i = 0; i < str_array->length(); ++i) {
         std::string curr_str = str_array->GetString(i);
         if (curr_str < prev_str) {
-          LOG(ERROR) << "Sorting error at index " << i << ": " << curr_str
-                     << " < " << prev_str;
+          LOG(ERROR) << "Sorting error at index " << i << ": \"" << curr_str
+                     << "\" < \"" << prev_str << "\"";
           return false;
         }
         prev_str = curr_str;
@@ -156,6 +169,9 @@ protected:
   std::unique_ptr<trie_v2::TrieBuilder> trie_builder_;
   std::unique_ptr<trie_v2::Trie> trie_;
   std::unique_ptr<trie_v2::TriePrinter> printer_;
+
+  // (prefix_len, key, value)
+  std::vector<std::tuple<size_t, std::string, int>> results_;
 };
 
 } // namespace whippet_sort
