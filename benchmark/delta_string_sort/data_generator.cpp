@@ -31,6 +31,7 @@ std::string generate_random_string(std::mt19937 &mt_generator, int length) {
   std::uniform_int_distribution<> distribution(0, characters.size() - 1);
 
   std::string random_string;
+  random_string.reserve(length);
   for (int i = 0; i < length; ++i) {
     random_string += characters[distribution(mt_generator)];
   }
@@ -43,6 +44,7 @@ generate_random_string(std::mt19937 &mt_generator, int length,
   std::uniform_int_distribution<> distribution(0, block_lengths.size() - 1);
 
   std::string random_string;
+  random_string.reserve(length * block_lengths.front().size());
   for (int i = 0; i < length; ++i) {
     random_string += block_lengths[distribution(mt_generator)];
   }
@@ -155,23 +157,24 @@ generate_block_pref_str_array(int n, int str_avg_len) {
   std::vector<std::vector<std::string>> thread_strings(num_threads);
 
   for (int t = 0; t < num_threads; ++t) {
-    threads.emplace_back([&, t]() {
+    threads.emplace_back([&, t, &strs = thread_strings[t]]() {
       std::mt19937 gen(rd() + t);
       std::uniform_int_distribution<> local_length_distribution(min_len,
                                                                 max_len);
       std::uniform_int_distribution<int> int_distribution;
       int start = t * n / num_threads;
       int end = (t + 1) * n / num_threads;
-      thread_strings[t].reserve(end - start);
+      strs.reserve(end - start);
       std::string last_str;
       for (int i = start; i < end; ++i) {
         size_t len = local_length_distribution(gen);
+        len = len / block_len * block_len;
         int prefix_length =
             int_distribution(gen) % (std::min(len, last_str.length()) + 1);
         last_str =
             last_str.substr(0, prefix_length) +
             generate_random_string(gen, len - prefix_length, block_lengths);
-        thread_strings[t].push_back(last_str);
+        strs.push_back(last_str);
       }
     });
   }
@@ -202,12 +205,15 @@ int main(int argc, char **argv) {
   std::vector<std::thread> threads;
 
   threads.emplace_back([&]() {
+    // total random strings
     columns[0] = generate_rnd_str_array(n, str_avg_len).ValueOrDie();
   });
   threads.emplace_back([&]() {
+    // random prefix length + random prefix strings
     columns[1] = generate_rnd_pref_str_array(n, str_avg_len).ValueOrDie();
   });
   threads.emplace_back([&]() {
+    // random select words to construct string with random prefix length
     columns[2] = generate_block_pref_str_array(n, str_avg_len).ValueOrDie();
   });
 

@@ -30,6 +30,7 @@ DEFINE_string(input_file,
               std::string(PROJECT_SOURCE_DIR) + "/data/input-2e5-100.parquet",
               "Input file path");
 DEFINE_int32(sort_col_idx, 2, "Column index to sort by");
+DEFINE_bool(debug, false, "Debug mode");
 
 DEFINE_bool(hi_arrow, false, "Run high-level Arrow sorting benchmark");
 DEFINE_bool(low_arrow, false, "Run low-level Arrow sorting benchmark");
@@ -46,11 +47,7 @@ int main(int argc, char *argv[]) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
 
   nice(-20);
-#ifndef NDEBUG
-  const int num_runs = 1;
-#else
-  const int num_runs = 5;
-#endif
+  const int num_runs = FLAGS_debug ? 1 : 5;
 
   const uint32_t col_idx = FLAGS_sort_col_idx;
 
@@ -108,9 +105,9 @@ int main(int argc, char *argv[]) {
     });
     steps.push_back([&]() {
       sorter->generate_result();
-#ifndef NDEBUG
-      sorter->check_correctness();
-#endif
+      if (FLAGS_debug) {
+        sorter->check_correctness();
+      }
       return "generate result";
     });
     auto [arrow_median, arrow_average] =
@@ -141,9 +138,9 @@ int main(int argc, char *argv[]) {
     });
     steps.push_back([&]() {
       sorter->generate_result();
-#ifndef NDEBUG
-      sorter->check_correctness();
-#endif
+      if (FLAGS_debug) {
+        sorter->check_correctness();
+      }
       return "generate result";
     });
     auto [median, average] =
@@ -174,9 +171,9 @@ int main(int argc, char *argv[]) {
     });
     steps.push_back([&]() {
       sorter->generate_result();
-#ifndef NDEBUG
-      sorter->check_correctness();
-#endif
+      if (FLAGS_debug) {
+        sorter->check_correctness();
+      }
       return "generate result";
     });
     auto [median, average] =
@@ -208,9 +205,9 @@ int main(int argc, char *argv[]) {
     });
     steps.push_back([&]() {
       sorter->generate_result();
-#ifndef NDEBUG
-      sorter->check_correctness();
-#endif
+      if (FLAGS_debug) {
+        sorter->check_correctness();
+      }
       return "generate result";
     });
     auto [median, average] =

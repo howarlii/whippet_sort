@@ -6,13 +6,13 @@ import itertools
 import os
 
 
-def run_benchmark(data_path, lazy_dep_lmt, lazy_key_burst_lmt):
+def run_benchmark(data_path, sort_col_idx, lazy_dep_lmt, lazy_key_burst_lmt):
     cmd = [
         "./build/src/benchmark",
         f"--input_file={data_path}",
         f"--trie_lazy_dep_lmt={lazy_dep_lmt}",
         f"--trie_lazy_key_burst_lmt={lazy_key_burst_lmt}",
-        "--sort_col_idx=2",
+        f"--sort_col_idx={sort_col_idx}",
     ]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -38,12 +38,13 @@ def run_benchmark(data_path, lazy_dep_lmt, lazy_key_burst_lmt):
         return None
 
 
-def run_benchmark_and_draw(data_name, data_path="", lazy_dep_lmt=4, lazy_key_burst_lmt=4096):
+def run_benchmark_and_draw(data_name, data_path="", col_idx=2, burst_dep=4, burst_size_lmt=4096):
     if data_path == "":
         data_path = f"./data/input-{data_name}.parquet"
 
-    title_str = f"{data_name}-{lazy_dep_lmt}-{lazy_key_burst_lmt}"
-    step_time_avg = run_benchmark(data_path, lazy_dep_lmt, lazy_key_burst_lmt)
+    title_str = f"{data_name}-col{col_idx}-bdep{burst_dep}-bsize{burst_size_lmt}"
+    step_time_avg = run_benchmark(
+        data_path, col_idx, burst_dep, burst_size_lmt)
 
     # 提取方法名称
     methods = list(step_time_avg.keys())
@@ -76,15 +77,15 @@ def run_benchmark_and_draw(data_name, data_path="", lazy_dep_lmt=4, lazy_key_bur
 
             # 在图中添加步骤名称和对应的时间
             ax.text(index[i], bottom + step_time / 2,
-                    f'{step_name}\n{step_time}ms', ha='center', va='center', color='black', fontsize=10)
+                    f'{step_name}\n{step_time}ms', ha='center', va='center', color='black', fontsize=8)
 
             # 更新底部位置以便堆叠
             bottom += step_time
             total_time += step_time  # 计算总耗时
 
         # 在每个柱子的顶端添加总耗时
-        ax.text(index[i], bottom + 100, f'Total: {int(total_time)}ms',
-                ha='center', va='bottom', color='black', fontsize=12)
+        ax.text(index[i], bottom + 5, f'Total: {int(total_time)}ms',
+                ha='center', va='bottom', color='black', fontsize=10)
 
     # 添加标签和标题
     ax.set_xlabel('Methods')
@@ -105,23 +106,15 @@ def run_benchmark_and_draw(data_name, data_path="", lazy_dep_lmt=4, lazy_key_bur
     # plt.show()
 
 
-lazy_dep_lmt = 4
-lazy_key_burst_lmt = 4096
+burst_dep = 4
+burst_size_lmt = 4096
 
-run_benchmark_and_draw("2e5-100", "", lazy_dep_lmt, lazy_key_burst_lmt)
-run_benchmark_and_draw("2e5-200", "", lazy_dep_lmt, lazy_key_burst_lmt)
-run_benchmark_and_draw("2e5-400", "", lazy_dep_lmt, lazy_key_burst_lmt)
-run_benchmark_and_draw("2e5-800", "", lazy_dep_lmt, lazy_key_burst_lmt)
-run_benchmark_and_draw("2e5-1600", "", lazy_dep_lmt, lazy_key_burst_lmt)
+row_sizes = ["2e5", "2e6", "2e7"]
+str_lengths = [100, 200, 400, 800, 1600]
+col_idxs = [2, 1]
 
-run_benchmark_and_draw("2e6-100", "", lazy_dep_lmt, lazy_key_burst_lmt)
-run_benchmark_and_draw("2e6-200", "", lazy_dep_lmt, lazy_key_burst_lmt)
-run_benchmark_and_draw("2e6-400", "", lazy_dep_lmt, lazy_key_burst_lmt)
-run_benchmark_and_draw("2e6-800", "", lazy_dep_lmt, lazy_key_burst_lmt)
-run_benchmark_and_draw("2e6-1600", "", lazy_dep_lmt, lazy_key_burst_lmt)
-
-run_benchmark_and_draw("2e7-100", "", lazy_dep_lmt, lazy_key_burst_lmt)
-run_benchmark_and_draw("2e7-200", "", lazy_dep_lmt, lazy_key_burst_lmt)
-run_benchmark_and_draw("2e7-400", "", lazy_dep_lmt, lazy_key_burst_lmt)
-run_benchmark_and_draw("2e7-800", "", lazy_dep_lmt, lazy_key_burst_lmt)
-run_benchmark_and_draw("2e7-1600", "", lazy_dep_lmt, lazy_key_burst_lmt)
+for size in row_sizes:
+    for length in str_lengths:
+        for col_idx in col_idxs:
+            run_benchmark_and_draw(f"{size}-{length}", "",
+                                   col_idx, burst_dep, burst_size_lmt)

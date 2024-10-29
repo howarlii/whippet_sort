@@ -163,18 +163,19 @@ public:
         curr_node_->substr_values.emplace_back(curr_skip_len, value);
         curr_length_ = curr_node_->plen + curr_node_->str.length();
         return;
-      } else if (curr_skip_len == curr_node_->str.length()) {
-        curr_node_->str.append(key.substr(key_i));
-        curr_node_->substr_values.emplace_back(curr_node_->str.length(), value);
-        curr_length_ = curr_node_->plen + curr_node_->str.length();
-        return;
+        // } else if (curr_skip_len == curr_node_->str.length()) {
+        //   curr_node_->str.append(key.substr(key_i));
+        //   curr_node_->substr_values.emplace_back(curr_node_->str.length(),
+        //   value); curr_length_ = curr_node_->plen + curr_node_->str.length();
+        //   return;
       } else {
         auto children = &curr_node_->children_l;
         auto ch = key[key_i];
         auto pos = children->end();
 
         // TODO: std::lower_bound can be optimized
-        if (curr_node_->str[curr_skip_len] < key[key_i]) {
+        if (curr_skip_len == curr_node_->str.length() ||
+            curr_node_->str[curr_skip_len] < key[key_i]) {
           // key is greater than curr_node_->str
           children = &curr_node_->children_g;
           pos = std::lower_bound(children->begin(), children->end(),
@@ -218,7 +219,8 @@ public:
       }
     }
     DCHECK(false) << "should not reach here";
-    // TODO: break down the edge if too long (too many elements).
+    // TODO: break down the edge if too long (too many elements). This really
+    // improve the proformance!!!
   }
 
   size_t valueNum() const override { return trie_->value_num; }
@@ -306,6 +308,16 @@ protected:
     DCHECK_LT(curr_node->node_id, lazy_keys_.size())
         << "nid: " << curr_node->node_id
         << ", node_keys_.size(): " << lazy_keys_.size();
+    if (curr_node->is_lazy &&
+        curr_node->lazy_values.size() < config_.lazy_key_burst_lmt) {
+      curr_node->lazy_values.insert(curr_node->lazy_values.end(),
+                                    lazy_keys_[curr_node->node_id].begin(),
+                                    lazy_keys_[curr_node->node_id].end());
+      lazy_keys_[curr_node->node_id].clear();
+      return;
+    }
+    curr_node->is_lazy = false;
+
     auto curr_length = curr_node->plen + curr_node->str.length();
     size_t str_skip_len = 0;
     decltype(lazy_keys_)::value_type *last_key_go = nullptr;
@@ -381,6 +393,7 @@ protected:
           auto new_node =
               trie_->createNode(curr_node, curr_node->plen + str_skip_len,
                                 std::string(key), value);
+          new_node->is_lazy = true;
           children->insert(pos, std::make_tuple(str_skip_len, ch, new_node));
 
           lazy_keys_.emplace_back();
@@ -461,7 +474,6 @@ public:
         // idx is the index of the child node in the children_g
 
         if (node->is_lazy) {
-          // handleLazyNode(node);
           for (auto &[key, value] : node_lazy_keys_[node->node_id]) {
             prefix_.append(std::move(key));
             print_string(value);
@@ -501,20 +513,17 @@ public:
           prefix_.append(node->str.data() + node_prefix_len,
                          v_len - node_prefix_len);
           node_prefix_len = v_len;
-          // func_(0, prefix_, value);
           print_string(value);
         }
 
         // print the value that greater than current node
         if (idx < node->children_g.size()) {
           auto [len, ch, child_node] = node->children_g[idx++];
-          // prefix_.resize(prefix_.size() - node_prefix_len + len);
           last_prefix_len_ -= node_prefix_len - len;
           node_prefix_len = len;
           prefix_stack_.emplace(std::make_tuple(child_node, 0, 0));
           continue;
         }
-        // prefix_.resize(prefix_.size() - node_prefix_len);
         last_prefix_len_ -= node_prefix_len;
         prefix_stack_.pop();
       }
