@@ -1,3 +1,4 @@
+import shutil
 import matplotlib.pyplot as plt
 import numpy as np
 import subprocess
@@ -5,10 +6,12 @@ import json
 import itertools
 import os
 
+running_benchmark = "./build/src/benchmark_running"
+
 
 def run_benchmark(data_path, sort_col_idx, lazy_dep_lmt, lazy_key_burst_lmt):
     cmd = [
-        "./build/src/benchmark",
+        running_benchmark,
         f"--input_file={data_path}",
         f"--trie_lazy_dep_lmt={lazy_dep_lmt}",
         f"--trie_lazy_key_burst_lmt={lazy_key_burst_lmt}",
@@ -106,6 +109,8 @@ def run_benchmark_and_draw(data_name, data_path="", col_idx=2, burst_dep=4, burs
     # plt.show()
 
 
+shutil.copy2("./build/src/benchmark", running_benchmark)
+
 burst_dep = 4
 burst_size_lmt = 4096
 
@@ -118,3 +123,5 @@ for size in row_sizes:
         for col_idx in col_idxs:
             run_benchmark_and_draw(f"{size}-{length}", "",
                                    col_idx, burst_dep, burst_size_lmt)
+
+os.remove(running_benchmark)

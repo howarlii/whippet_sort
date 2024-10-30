@@ -20,4 +20,6 @@ target_link_libraries(
           glog::glog
           fmt::fmt
 )
-add_test(UnitTests UnitTests)
+include(GoogleTest)
+
+gtest_add_tests(TARGET UnitTests)

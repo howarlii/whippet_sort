@@ -105,7 +105,7 @@ public:
    * @param key The suffix of the key to insert
    * @param value The value to the key
    */
-  void insert(size_t prefix_len, const std::string_view &key_in,
+  void insert(size_t prefix_len, std::string_view key_in,
               ValueT value) override {
     ++trie_->value_num_;
     const auto &str = trie_->str_pool_.emplace_back(key_in);
@@ -378,7 +378,7 @@ private:
             .toString(&key, 0);
         lazy_keys.emplace_back(std::move(key), std::move(lazy_key.value));
       } else {
-        DCHECK(key_i % 2 == 0);
+        CHECK((key_i & 1) == 0);
         lazy_key.key.to_string(&key, 0);
         auto str = lazy_keys.back().first.substr(0, key_i / kTranF) + key;
         lazy_keys.emplace_back(std::move(str), std::move(lazy_key.value));

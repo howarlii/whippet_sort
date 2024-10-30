@@ -55,7 +55,7 @@ public:
     }
     num_rows_ = metadata_->num_rows();
 
-    DCHECK(trie_builder_);
+    CHECK(trie_builder_);
     for (int i = 0; i < metadata_->num_row_groups(); ++i) {
       auto row_group = file_reader_->RowGroup(i);
       auto pager = row_group->GetColumnPageReader(col_idx_);

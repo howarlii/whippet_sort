@@ -48,8 +48,8 @@ public:
   SemiStringView(const SemiString &str);
 
   uint8_t operator[](size_t i) const {
-    DCHECK_GT(length_, 0);
-    DCHECK_LT(i, length_);
+    CHECK_GT(length_, 0);
+    CHECK_LT(i, length_);
     if (is_first_half_) {
       ++i;
     }

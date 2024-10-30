@@ -3,67 +3,27 @@
 #include <random>
 
 #include "trie_sort/trie_sort_v2.h"
-
+#include "trie_tester.h"
 #include "gtest/gtest.h"
 
 namespace whippet_sort::trie_v2 {
 namespace {
 
-class TrieTestV2Bfs : public ::testing::Test {
+class TrieTestV2Bfs : public TrieTester {
 public:
-  void init(uint8_t lmt) { characters = "abcdefghijklmnopqrstuvwxyz"; }
-
-  void generate(int n, int str_max_len) {
-    // std::random_device rd;
-    std::mt19937 gen(10);
-    std::uniform_int_distribution<uint32_t> dist;
-    a_prefixs.reserve(n);
-    a_prefix_lens.reserve(n);
-    int last_len = 0;
-    for (int i = 0; i < n; ++i) {
-      int prefix_len = dist(gen) % (last_len + 1);
-      int len = dist(gen) % (str_max_len - prefix_len + 1);
-      if (prefix_len == 0)
-        len = std::max(len, 1);
-      std::string key = generateRandomString(gen, len);
-
-      a_prefixs.push_back(key);
-      a_prefix_lens.push_back(prefix_len);
-      last_len = key.size() + prefix_len;
-    }
-
-    LOG(INFO) << "generate data, str_num: " << n
-              << ", str_max_len: " << str_max_len;
-  }
-
-  void stdSort() {
-    auto begin_time = std::chrono::steady_clock::now();
-    a_decoded = decodePrefixEecode(a_prefixs, a_prefix_lens, enable_debug);
-    std::sort(a_decoded.begin(), a_decoded.end(),
-              [](auto &x, auto &y) { return x < y; });
-
-    auto end_time = std::chrono::steady_clock::now() - begin_time;
-    LOG(INFO) << "decode + std::sort time: "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(end_time)
-                     .count()
-              << "ms";
-
-    if (enable_debug) {
-      for (int i = 0; i < a_decoded.size(); ++i) {
-        std::cout << a_decoded[i] << "\n";
-      }
-      std::cout << "==================\n";
-    }
-  }
-
   void insertAll() {
     auto begin_time = std::chrono::steady_clock::now();
     std::vector<std::tuple<size_t, std::string_view, int>> keys;
     keys.reserve(a_prefixs.size());
     for (int i = 0; i < a_prefixs.size(); ++i) {
+      if (a_prefix_lens[i] == 0 && !keys.empty()) {
+        trie_.insert(std::move(keys));
+        keys.clear();
+      }
       keys.emplace_back(a_prefix_lens[i], a_prefixs[i], i);
     }
-    trie_.insert(std::move(keys));
+    if (!keys.empty())
+      trie_.insert(std::move(keys));
 
     auto end_time = std::chrono::steady_clock::now() - begin_time;
     LOG(INFO) << "insert time: "
@@ -73,14 +33,14 @@ public:
   }
 
   void outputIt() {
-    std::vector<std::string> res_a;
-    std::vector<int> res_prefix_lens;
-    res_a.reserve(trie_.valueNum());
+    res_pref.reserve(trie_.valueNum());
     res_prefix_lens.reserve(trie_.valueNum());
+    a_values.reserve(trie_.valueNum());
 
     auto f = [&](size_t prefix_len, std::string key, ValueT value) {
-      res_a.emplace_back(std::move(key));
+      res_pref.emplace_back(std::move(key));
       res_prefix_lens.push_back(prefix_len);
+      a_values.push_back(value);
     };
 
     auto begin_time = std::chrono::steady_clock::now();
@@ -95,96 +55,71 @@ public:
               << std::chrono::duration_cast<std::chrono::milliseconds>(end_time)
                      .count()
               << "ms";
-
-    auto out = decodePrefixEecode(res_a, res_prefix_lens, enable_debug);
-
-    for (int i = 0; i < out.size(); ++i) {
-      ASSERT_EQ(out[i], a_decoded[i]) << "on line: " << i;
-    }
-  }
-
-  static std::vector<std::string>
-  decodePrefixEecode(const std::vector<std::string> &a,
-                     const std::vector<int> &prefix_lens, bool print = false) {
-    std::vector<std::string> ans;
-    ans.reserve(a.size());
-    std::string last;
-    for (int i = 0; i < a.size(); ++i) {
-      last = last.substr(0, prefix_lens[i]) + a[i];
-
-      ans.push_back(last);
-    }
-    if (print) {
-      for (int i = 0; i < ans.size(); ++i) {
-        std::cout << ans[i] << "\n";
-      }
-      std::cout << "==================\n";
-    }
-    return ans;
   }
 
 protected:
-  std::string generateRandomString(std::mt19937 &gen, int length) {
-    std::uniform_int_distribution<> charDist(0, characters.size() - 1);
-
-    std::string randomString;
-    for (int i = 0; i < length; ++i) {
-      randomString += characters[charDist(gen)];
-    }
-    return randomString;
-  }
-
   // put in any custom data members that you need
   TrieBuilderBfs trie_;
   std::unique_ptr<TriePrinter> trie_printer;
-
-  std::string characters;
-  std::vector<std::string> a_prefixs;
-  std::vector<int> a_prefix_lens;
-  std::vector<std::string> a_decoded;
-  bool enable_debug = false;
 };
 
 TEST_F(TrieTestV2Bfs, t1) {
-  this->init(2);
-  enable_debug = true;
-
+  // enable_debug = true;
+  trie_ = TrieBuilderBfs(TrieConfig{.lazy_key_burst_lmt = 3});
   generate(10, 10);
-  stdSort();
+  generate(10, 10);
+  generate(10, 10);
+  generate(10, 10);
+  gen_done();
   insertAll();
   outputIt();
+  check_res();
 }
 
 TEST_F(TrieTestV2Bfs, t2) {
-  this->init(8);
-  // enable_debug = true;
 
   generate(1e6, 200);
-  stdSort();
+  gen_done();
   insertAll();
   outputIt();
+  check_res();
+}
+
+TEST_F(TrieTestV2Bfs, t2_2) {
+
+  // enable_debug = true;
+
+  // trie_ = TrieBuilderBfs(TrieConfig{.lazy_key_burst_lmt = 0});
+  generate(1e6, 1600);
+  generate(1e6, 1600);
+  generate(1e6, 1600);
+  generate(1e6, 1600);
+  gen_done();
+  insertAll();
+  outputIt();
+  check_res();
 }
 
 TEST_F(TrieTestV2Bfs, t3) {
   GTEST_SKIP();
-  this->init(8);
   // enable_debug = true;
 
   generate(1e7, 500);
-  stdSort();
+  gen_done();
   insertAll();
   outputIt();
+  check_res();
 }
 
 TEST_F(TrieTestV2Bfs, t4) {
   GTEST_SKIP();
-  this->init(8);
   // enable_debug = true;
 
   generate(1e7, 1000);
-  stdSort();
+  gen_done();
   insertAll();
   outputIt();
+  check_res();
 }
 } // namespace
 } // namespace whippet_sort::trie_v2

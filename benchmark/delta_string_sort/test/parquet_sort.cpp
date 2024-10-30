@@ -16,14 +16,11 @@ namespace {
 
 class ParquetSort : public ::testing::Test {
 public:
-  const std::string input_file =
-      std::string(PROJECT_SOURCE_DIR) + "/data/input-2e6-1600.parquet";
-  // std::string(PROJECT_SOURCE_DIR) + "/data/input-2e5-100.parquet";
-  const uint32_t col_idx = 1;
+  static const std::string input_file;
+  static const uint32_t col_idx;
+  static size_t std_hash;
 
-  size_t std_hash = 0;
-
-  void SetUp() override {
+  static void SetUpTestSuite() {
     whippet_sort::ParquetSorterArrow sorter(input_file, col_idx);
     sorter.read_all();
     // sorter.print_column();
@@ -35,6 +32,10 @@ public:
     LOG(INFO) << "hash: " << std_hash;
   }
 };
+const std::string ParquetSort::input_file =
+    std::string(PROJECT_SOURCE_DIR) + "/data/input-2e6-1600.parquet";
+const uint32_t ParquetSort::col_idx = 1;
+size_t ParquetSort::std_hash = 0;
 
 TEST_F(ParquetSort, Trie) {
   whippet_sort::ParquetSorterTrie sorter(input_file, col_idx);

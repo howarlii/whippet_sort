@@ -7,7 +7,7 @@ import subprocess
 import json
 import itertools
 
-data_name = "2e6-1600"
+data_name = "2e6-800"
 data_path = f"./data/input-{data_name}.parquet"
 
 
@@ -46,14 +46,14 @@ def run_benchmark(lazy_dep_lmt, lazy_key_burst_lmt):
 
 # Define the range of values to test
 lazy_dep_lmt_range = [4]
-lazy_key_burst_lmt_range = [512, 1024, 2048, 4096, 8192, 16384]
+lazy_key_burst_lmt_range = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
 
 results = []
 
 for lazy_dep_lmt, lazy_key_burst_lmt in itertools.product(lazy_dep_lmt_range, lazy_key_burst_lmt_range):
     result = run_benchmark(lazy_dep_lmt, lazy_key_burst_lmt)
     if result:
-        result = result['Trie']
+        result = result['TrieV2']
         result['lazy_dep_lmt'] = lazy_dep_lmt
         result['lazy_key_burst_lmt'] = lazy_key_burst_lmt
         results.append(result)
@@ -92,7 +92,7 @@ def draw_plot_tot(path_pref, step_name):
     plt.figure(figsize=(12, 6))
     for dep_lmt in df['lazy_dep_lmt'].unique():
         subset = df[df['lazy_dep_lmt'] == dep_lmt]
-        plt.plot(subset['lazy_key_burst_lmt'], subset['read+sort'] + subset['pre-sort'] + subset['print-trie'] + subset['generate result'],
+        plt.plot(subset['lazy_key_burst_lmt'], subset['read+build'] + subset['pre-sort'] + subset['print-trie'],
                  marker='o', linestyle='-', label=f'lazy_dep_lmt = {dep_lmt}')
 
     plt.xlabel('Lazy Key Burst Limit (lazy_key_burst_lmt)')
@@ -111,6 +111,7 @@ def draw_plot_tot(path_pref, step_name):
     print(f"Figure saved as '{path_pref}_{step_name}_vs_key_burst_lmt.png'")
 
 
-draw_plot(f'figs/{data_name}', 'read+sort')
-draw_plot(f'figs/{data_name}', 'generate result')
+draw_plot(f'figs/{data_name}', 'read+build')
+draw_plot(f'figs/{data_name}', 'pre-sort')
+draw_plot(f'figs/{data_name}', 'print-trie')
 draw_plot_tot(f'figs/{data_name}', 'total')

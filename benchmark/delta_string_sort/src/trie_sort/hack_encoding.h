@@ -220,7 +220,7 @@ private:
   }
 
   void InitBlock() {
-    DCHECK_GT(total_values_remaining_, 0) << "InitBlock called at EOF";
+    CHECK_GT(total_values_remaining_, 0) << "InitBlock called at EOF";
 
     if (!decoder_->GetZigZagVlqInt(&min_delta_))
       ParquetException::EofException("InitBlock EOF");
@@ -279,7 +279,7 @@ private:
       InitBlock();
     }
 
-    DCHECK(first_block_initialized_);
+    CHECK(first_block_initialized_);
     while (i < max_values) {
       // Ensure we have an initialized mini-block
       if (ARROW_PREDICT_FALSE(values_remaining_current_mini_block_ == 0)) {
@@ -384,13 +384,13 @@ public:
         buffered_prefix_length_->Resize(num_prefix * sizeof(int32_t)));
     int ret = prefix_len_decoder_.Decode(
         buffered_prefix_length_->mutable_data_as<int32_t>(), num_prefix);
-    DCHECK_EQ(ret, num_prefix);
+    CHECK_EQ(ret, num_prefix);
     prefix_len_offset_ = 0;
     num_valid_values_ = num_prefix;
 
     int bytes_left = decoder_->bytes_left();
     // If len < bytes_left, prefix_len_decoder.Decode will throw exception.
-    DCHECK_GE(len, bytes_left);
+    CHECK_GE(len, bytes_left);
     int suffix_begins = len - bytes_left;
     // at this time, the decoder_ will be at the start of the encoded suffix
     // data.
