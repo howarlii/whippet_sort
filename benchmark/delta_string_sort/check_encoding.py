@@ -2,6 +2,7 @@ import pyarrow.parquet as pq
 
 
 def check_column_encodings(parquet_file_path):
+    print(f"Checking column encodings in '{parquet_file_path}'...")
     # Open the Parquet file
     parquet_file = pq.ParquetFile(parquet_file_path)
 
@@ -24,12 +25,15 @@ def check_column_encodings(parquet_file_path):
 
             # Print the column name and encoding methods used
             print(
-                f"  Column '{column_name}' uses the following encodings: {encoding}")
+                f"  Column '{column_name}' uses the following encodings: {encoding}. type: {column.physical_type}.")
+            print(f"{column}")
 
     print("Encoding check complete.")
 
 
 # Example usage
 # Replace with the path to your Parquet file
-parquet_file_path = './data/input-2e5-100.parquet'
+parquet_file_path = './data/input-ty2-2e6-100.parquet'
+parquet_file_path = './data/input-ty2-20-150.parquet'
+parquet_file_path = './data/input-20-150.parquet'
 check_column_encodings(parquet_file_path)

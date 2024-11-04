@@ -8,10 +8,10 @@ import os
 # Set up argument parser
 parser = argparse.ArgumentParser(
     description='Generate Parquet file with random data')
-parser.add_argument('--n_rows', '-n', type=str, default="2e6",
+parser.add_argument('--n_rows', '-n', type=str, default="20",
                     help='Number of rows (can be in scientific notation)')
 parser.add_argument('--str_len_avg', '-l', type=int,
-                    default=200, help='Average length of strings')
+                    default=150, help='Average length of strings')
 parser.add_argument('--test', type=bool,
                     default=False, help='Test mode')
 

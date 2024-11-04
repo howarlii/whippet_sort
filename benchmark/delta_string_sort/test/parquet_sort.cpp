@@ -33,9 +33,20 @@ public:
   }
 };
 const std::string ParquetSort::input_file =
-    std::string(PROJECT_SOURCE_DIR) + "/data/input-2e6-1600.parquet";
+    std::string(PROJECT_SOURCE_DIR) + "/data/input-ty2-2e6-800.parquet";
 const uint32_t ParquetSort::col_idx = 1;
 size_t ParquetSort::std_hash = 0;
+
+TEST_F(ParquetSort, Hacked) {
+  whippet_sort::ParquetSorterHacked sorter(input_file, col_idx);
+
+  sorter.read_all();
+  sorter.sort_by_column();
+  // DLOG(INFO) << sorter.get_sorted_column()->ToString();
+
+  auto hash = sorter.compute_hash();
+  ASSERT_EQ(hash, std_hash);
+}
 
 TEST_F(ParquetSort, Trie) {
   whippet_sort::ParquetSorterTrie sorter(input_file, col_idx);

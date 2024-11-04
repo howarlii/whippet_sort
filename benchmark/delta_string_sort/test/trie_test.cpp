@@ -82,18 +82,19 @@ public:
   void stdSort() {
     auto begin_time = std::chrono::steady_clock::now();
     a_decoded = decodePrefixEecode(a_prefixs, a_prefix_lens, enable_debug);
-    std::sort(a_decoded.begin(), a_decoded.end(),
+    a_sorted = a_decoded;
+    std::sort(a_sorted.begin(), a_sorted.end(),
               [](auto &x, auto &y) { return x < y; });
 
     auto end_time = std::chrono::steady_clock::now() - begin_time;
     LOG(INFO) << "decode + std::sort time: "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(end_time)
+              << std::chrono::duration_cast<std::chrono::microseconds>(end_time)
                      .count()
               << "ms";
 
     if (enable_debug) {
-      for (int i = 0; i < a_decoded.size(); ++i) {
-        SemiStringView q((std::string_view(a_decoded[i])));
+      for (int i = 0; i < a_sorted.size(); ++i) {
+        SemiStringView q((std::string_view(a_sorted[i])));
         for (int j = 0; j < q.length(); ++j) {
           std::cout << (int)q[j] << " ";
         }
@@ -110,7 +111,7 @@ public:
     }
     auto end_time = std::chrono::steady_clock::now() - begin_time;
     LOG(INFO) << "insert time: "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(end_time)
+              << std::chrono::duration_cast<std::chrono::microseconds>(end_time)
                      .count()
               << "ms";
   }
@@ -118,17 +119,20 @@ public:
   void outputIt() {
     std::vector<std::string> res_a;
     std::vector<int> res_prefix_lens;
+    std::vector<int> res_values;
     res_a.reserve(trie_.valueNum());
     res_prefix_lens.reserve(trie_.valueNum());
 
     auto begin_time = std::chrono::steady_clock::now();
 
     trie__printer = std::make_unique<TriePrinter>(trie_.build());
+    if (index_only)
+      trie__printer->enableIndexOnly();
     trie__printer->presort();
 
     auto end_time = std::chrono::steady_clock::now() - begin_time;
     LOG(INFO) << "preSort time: "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(end_time)
+              << std::chrono::duration_cast<std::chrono::microseconds>(end_time)
                      .count()
               << "ms";
 
@@ -136,24 +140,30 @@ public:
     while (trie__printer->hasNext()) {
       size_t prefix_len;
       std::string key;
-      int values;
-      bool ret = trie__printer->next(&prefix_len, &key, &values);
+      int value;
+      bool ret = trie__printer->next(&prefix_len, &key, &value);
       if (!ret)
         break;
       res_a.emplace_back(std::move(key));
       res_prefix_lens.push_back(prefix_len);
+      res_values.emplace_back(value);
       // std::cout << prefix_len << " " << key << " " << values << std::endl;
     }
     end_time = std::chrono::steady_clock::now() - begin_time;
     LOG(INFO) << "output time: "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(end_time)
+              << std::chrono::duration_cast<std::chrono::microseconds>(end_time)
                      .count()
               << "ms";
 
-    auto out = decodePrefixEecode(res_a, res_prefix_lens, enable_debug);
+    for (int i = 0; i < res_values.size(); ++i) {
+      ASSERT_EQ(a_decoded[res_values[i]], a_sorted[i]) << "on line: " << i;
+    }
 
-    for (int i = 0; i < out.size(); ++i) {
-      ASSERT_EQ(out[i], a_decoded[i]) << "on line: " << i;
+    if (index_only) {
+      auto out = decodePrefixEecode(res_a, res_prefix_lens, enable_debug);
+      for (int i = 0; i < out.size(); ++i) {
+        ASSERT_EQ(out[i], a_sorted[i]) << "on line: " << i;
+      }
     }
   }
 
@@ -194,11 +204,13 @@ protected:
   // put in any custom data members that you need
   TrieBuilder trie_;
   std::unique_ptr<TriePrinter> trie__printer;
+  bool index_only = false;
 
   std::string characters;
   std::vector<std::string> a_prefixs;
   std::vector<int> a_prefix_lens;
   std::vector<std::string> a_decoded;
+  std::vector<std::string> a_sorted;
   bool enable_debug = false;
 };
 
@@ -233,6 +245,16 @@ TEST_F(TrieTest, t3) {
 }
 
 TEST_F(TrieTest, t4) {
+  this->init(8);
+  // enable_debug = true;
+
+  generate(1e7, 1000);
+  stdSort();
+  insertAll();
+  outputIt();
+}
+
+TEST_F(TrieTest, t4_2) {
   this->init(8);
   // enable_debug = true;
 

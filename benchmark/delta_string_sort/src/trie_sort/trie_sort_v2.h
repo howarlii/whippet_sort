@@ -27,6 +27,7 @@ constexpr size_t kElementNum = 256;
 struct TrieConfig {
   // lazy node brust limit, 0 means no lazy node
   int lazy_key_burst_lmt = 4096;
+  bool index_only = false;
 };
 
 struct Trie {
@@ -277,6 +278,8 @@ public:
 
   void
   insert(std::vector<std::tuple<size_t, std::string_view, int>> keys) override {
+    Timer tc(this);
+
     CHECK(!keys.empty());
     CHECK(std::get<0>(keys.front()) == 0);
     trie_->value_num += keys.size();
@@ -444,11 +447,17 @@ class TriePrinter {
 
 public:
   // func(prefix_len, key, value)
-  using FuncT = std::function<void(size_t, std::string, ValueT)>;
+  // using FuncT = std::function<void(size_t, std::string, ValueT)>;
 
-  TriePrinter(std::unique_ptr<Trie> &&trie) : trie_(std::move(trie)) {}
+  TriePrinter(std::unique_ptr<Trie> &&trie, TrieConfig config = {})
+      : trie_(std::move(trie)) {
+    if (config.index_only)
+      enableIndexOnly();
+  }
 
-  void registerFunc(FuncT func) { func_ = std::move(func); }
+  void enableIndexOnly() { index_only_ = true; }
+
+  // void registerFunc(FuncT func) { func_ = std::move(func); }
 
   void statistics() {
     std::vector<size_t> node_ch_sizes;
@@ -481,7 +490,7 @@ public:
   }
 
   void preSort() {
-    CHECK(!pre_sorted);
+    CHECK(!pre_sorted_);
     node_lazy_keys_.resize(trie_->node_num);
     for (auto &node : trie_->node_pool_) {
       // auto nid = node->node_id;
@@ -510,15 +519,17 @@ public:
       }
 #endif
     }
-    pre_sorted = true;
+    pre_sorted_ = true;
   }
 
   void print() {
-    CHECK(pre_sorted);
+    CHECK(pre_sorted_);
+    ans_.reserve(trie_->value_num);
     for (auto &root : trie_->roots) {
       if (!root)
         continue;
       prefix_.clear();
+      prefix_len_ = 0;
       last_prefix_len_ = 0;
       prefix_stack_.emplace(root, 0, 0);
 
@@ -529,7 +540,9 @@ public:
 
         if (node->is_lazy) {
           for (auto &[key, value] : node_lazy_keys_[node->node_id]) {
-            prefix_.append(std::move(key));
+            if (!index_only_)
+              prefix_.append(std::move(key));
+            prefix_len_ += key.length();
             print_string(value);
             last_prefix_len_ -= key.length();
           }
@@ -545,14 +558,18 @@ public:
           auto [v_len, value] = node->substr_values.back();
           if (v_len <= len) {
             node->substr_values.pop_back();
-            prefix_.append(node->str.data() + node_prefix_len,
-                           v_len - node_prefix_len);
+            if (!index_only_)
+              prefix_.append(node->str.data() + node_prefix_len,
+                             v_len - node_prefix_len);
+            prefix_len_ += v_len - node_prefix_len;
             node_prefix_len = v_len;
             print_string(value);
           } else {
             node->children_l.pop_back();
-            prefix_.append(node->str.data() + node_prefix_len,
-                           len - node_prefix_len);
+            if (!index_only_)
+              prefix_.append(node->str.data() + node_prefix_len,
+                             len - node_prefix_len);
+            prefix_len_ += len - node_prefix_len;
             node_prefix_len = len;
             prefix_stack_.emplace(std::make_tuple(child_node, 0, 0));
           }
@@ -563,8 +580,10 @@ public:
         while (!node->substr_values.empty()) {
           auto [v_len, value] = node->substr_values.back();
           node->substr_values.pop_back();
-          prefix_.append(node->str.data() + node_prefix_len,
-                         v_len - node_prefix_len);
+          if (!index_only_)
+            prefix_.append(node->str.data() + node_prefix_len,
+                           v_len - node_prefix_len);
+          prefix_len_ += v_len - node_prefix_len;
           node_prefix_len = v_len;
           print_string(value);
         }
@@ -585,6 +604,8 @@ public:
   }
 
   auto valueNum() const { return trie_->value_num; }
+
+  auto &get_ans() { return ans_; }
 
 private:
   void handleLazyNode(Node *node,
@@ -608,18 +629,23 @@ private:
   }
 
   void print_string(int value) {
-    auto len = prefix_.length();
-    func_(last_prefix_len_, std::move(prefix_), value);
+    if (!index_only_)
+      CHECK_EQ(prefix_.size(), prefix_len_);
+    // func_(last_prefix_len_, std::move(prefix_), value);
+    ans_.emplace_back(last_prefix_len_, std::move(prefix_), value);
     prefix_.clear();
-    last_prefix_len_ += len;
+    last_prefix_len_ += prefix_len_;
+    prefix_len_ = 0;
     ++print_cnt_;
   }
 
   std::unique_ptr<Trie> trie_;
-  FuncT func_;
+  bool index_only_ = false;
+  // FuncT func_;
 
-  bool pre_sorted = false;
+  bool pre_sorted_ = false;
   std::string prefix_;
+  size_t prefix_len_ = 0;
   size_t last_prefix_len_ = 0;
   size_t print_cnt_ = 0;
 
@@ -627,6 +653,8 @@ private:
 
   std::vector<std::pair<std::string, ValueT>> lazy_keys_;
   std::vector<std::vector<std::pair<std::string, ValueT>>> node_lazy_keys_;
+
+  std::vector<std::tuple<size_t, std::string, int>> ans_;
 };
 
 } // namespace whippet_sort::trie_v2

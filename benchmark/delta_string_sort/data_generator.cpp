@@ -2,8 +2,10 @@
 #include <arrow/buffer.h>
 #include <arrow/io/api.h>
 #include <arrow/ipc/api.h>
+#include <arrow/table.h>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <parquet/arrow/writer.h>
 #include <random>
 #include <string>
@@ -12,8 +14,9 @@
 #include <gflags/gflags.h>
 #include <thread>
 
-DEFINE_string(n_rows, "10", "Number of rows (can be in scientific notation)");
-DEFINE_int32(str_len_avg, 100, "Average length of strings");
+DEFINE_string(n_rows, "20", "Number of rows (can be in scientific notation)");
+DEFINE_int32(str_len_avg, 150, "Average length of strings");
+DEFINE_int32(data_type, 2, "Type of data to generate");
 DEFINE_bool(debug, false, "debug mode");
 
 std::random_device rd;
@@ -94,7 +97,7 @@ generate_rnd_str_array(int n, int str_avg_len) {
 }
 
 arrow::Result<std::shared_ptr<arrow::Array>>
-generate_rnd_pref_str_array(int n, int str_avg_len) {
+generate_rnd_pref_str_array(int n, int str_avg_len, float sratio = 0.5) {
   // Define min and max lengths based on 0.8 * str_avg_len and 1.2 * str_avg_len
   int min_len = static_cast<int>(0.8 * str_avg_len);
   int max_len = static_cast<int>(1.2 * str_avg_len);
@@ -108,17 +111,21 @@ generate_rnd_pref_str_array(int n, int str_avg_len) {
       std::mt19937 gen(rd() + t);
       std::uniform_int_distribution<> local_length_distribution(min_len,
                                                                 max_len);
-      std::uniform_int_distribution<int> int_distribution;
+      std::uniform_real_distribution real_distribution(0.0, 1.0);
       int start = t * n / num_threads;
       int end = (t + 1) * n / num_threads;
       thread_strings[t].reserve(end - start);
       std::string last_str;
       for (int i = start; i < end; ++i) {
         size_t len = local_length_distribution(gen);
-        int prefix_length =
-            int_distribution(gen) % (std::min(len, last_str.length()) + 1);
-        last_str = last_str.substr(0, prefix_length) +
-                   generate_random_string(gen, len - prefix_length);
+        auto k = real_distribution(gen);
+        size_t prefix_length =
+            std::round(last_str.length() *
+                       ((k < sratio) ? (sratio + k / sratio * (1 - sratio))
+                                     : ((k - sratio) * sratio / (1 - sratio))));
+        prefix_length = std::min(prefix_length, len);
+        last_str.resize(prefix_length);
+        last_str += generate_random_string(gen, len - prefix_length);
         thread_strings[t].push_back(last_str);
       }
     });
@@ -142,7 +149,7 @@ generate_rnd_pref_str_array(int n, int str_avg_len) {
 }
 
 arrow::Result<std::shared_ptr<arrow::Array>>
-generate_block_pref_str_array(int n, int str_avg_len) {
+generate_block_pref_str_array(int n, int str_avg_len, float sratio = 0.5) {
   int block_len = 10;
   int block_num = 1000;
   // Define min and max lengths based on 0.8 * str_avg_len and 1.2 * str_avg_len
@@ -164,16 +171,19 @@ generate_block_pref_str_array(int n, int str_avg_len) {
       std::mt19937 gen(rd() + t);
       std::uniform_int_distribution<> local_length_distribution(min_bnum,
                                                                 max_bnum);
-      std::uniform_int_distribution<int> int_distribution;
+      std::uniform_real_distribution real_distribution(0.0, 1.0);
       int start = t * n / num_threads;
       int end = (t + 1) * n / num_threads;
       strs.reserve(end - start);
       std::string last_str;
       for (int i = start; i < end; ++i) {
         size_t str_bnum = local_length_distribution(gen);
-        int prefix_bnum =
-            int_distribution(gen) %
-            (std::min(str_bnum, last_str.length() / block_len) + 1);
+        auto k = real_distribution(gen);
+        size_t prefix_bnum =
+            std::round((1.0 * last_str.length() / block_len) *
+                       ((k < sratio) ? (sratio + k / sratio * (1 - sratio))
+                                     : ((k - sratio) * sratio / (1 - sratio))));
+        prefix_bnum = std::min(prefix_bnum, str_bnum);
 
         last_str.resize(prefix_bnum * block_len);
         last_str += generate_random_string(gen, str_bnum - prefix_bnum, blocks);
@@ -199,25 +209,21 @@ generate_block_pref_str_array(int n, int str_avg_len) {
   return array;
 }
 
-int main(int argc, char **argv) {
-  google::ParseCommandLineFlags(&argc, &argv, true);
-  int n = scientific_to_int(FLAGS_n_rows);
-  int str_avg_len = FLAGS_str_len_avg;
-
+std::shared_ptr<arrow::Table> gen_type1(int n, int str_avg_len) {
   std::vector<std::shared_ptr<arrow::Array>> columns(3);
   std::vector<std::thread> threads;
 
   threads.emplace_back([&]() {
+    // random select words to construct string with random prefix length
+    columns[0] = generate_block_pref_str_array(n, str_avg_len).ValueOrDie();
+  });
+  threads.emplace_back([&]() {
     // total random strings
-    columns[0] = generate_rnd_str_array(n, str_avg_len).ValueOrDie();
+    columns[2] = generate_rnd_str_array(n, str_avg_len).ValueOrDie();
   });
   threads.emplace_back([&]() {
     // random prefix length + random prefix strings
     columns[1] = generate_rnd_pref_str_array(n, str_avg_len).ValueOrDie();
-  });
-  threads.emplace_back([&]() {
-    // random select words to construct string with random prefix length
-    columns[2] = generate_block_pref_str_array(n, str_avg_len).ValueOrDie();
   });
 
   for (auto &thread : threads) {
@@ -227,7 +233,7 @@ int main(int argc, char **argv) {
     for (auto &col : columns) {
       std::cout << col->ToString() << std::endl;
     }
-    return 0;
+    return nullptr;
   }
 
   // Create a schema with one string column
@@ -237,27 +243,88 @@ int main(int argc, char **argv) {
 
   // Create a table from the array
   auto table = arrow::Table::Make(schema, columns);
+  return table;
+}
+
+std::shared_ptr<arrow::Table> gen_type2(int n, int str_avg_len) {
+  std::vector<std::shared_ptr<arrow::Array>> columns(3);
+  std::vector<std::thread> threads;
+  int col_num = 0;
+  threads.emplace_back([&, i = col_num++]() {
+    // random prefix length + random prefix strings
+    columns[i] = generate_rnd_pref_str_array(n, str_avg_len, 0.2).ValueOrDie();
+  });
+  threads.emplace_back([&, i = col_num++]() {
+    // random prefix length + random prefix strings
+    columns[i] = generate_rnd_pref_str_array(n, str_avg_len, 0.5).ValueOrDie();
+  });
+  threads.emplace_back([&, i = col_num++]() {
+    // random prefix length + random prefix strings
+    columns[i] = generate_rnd_pref_str_array(n, str_avg_len, 0.8).ValueOrDie();
+  });
+
+  for (auto &thread : threads) {
+    thread.join();
+  }
+  if (FLAGS_debug) {
+    for (auto &col : columns) {
+      std::cout << col->ToString() << std::endl;
+    }
+    return nullptr;
+  }
+
+  // Create a schema with one string column
+  auto schema =
+      arrow::schema({arrow::field("shared_pref_0.2", arrow::large_utf8()),
+                     arrow::field("shared_pref_0.5", arrow::large_utf8()),
+                     arrow::field("shared_pref_0.8", arrow::large_utf8())});
+
+  // Create a table from the array
+  auto table = arrow::Table::Make(schema, columns);
+  return table;
+}
+
+int main(int argc, char **argv) {
+  google::ParseCommandLineFlags(&argc, &argv, true);
+  int n = scientific_to_int(FLAGS_n_rows);
+  int str_avg_len = FLAGS_str_len_avg;
+
+  std::shared_ptr<arrow::Table> table;
+  if (FLAGS_data_type == 1)
+    table = gen_type1(n, str_avg_len);
+  else {
+    table = gen_type2(n, str_avg_len);
+  }
+  if (!table)
+    return 0;
 
   // Output Parquet file
   std::shared_ptr<arrow::io::FileOutputStream> outfile;
-  auto out_path =
-      std::string(PROJECT_SOURCE_DIR) +
-      fmt::format("/data/input-{}-{}.parquet", FLAGS_n_rows, FLAGS_str_len_avg);
+  auto out_path = std::string(PROJECT_SOURCE_DIR) +
+                  fmt::format("/data/input-ty{}-{}-{}.parquet", FLAGS_data_type,
+                              FLAGS_n_rows, FLAGS_str_len_avg);
   PARQUET_ASSIGN_OR_THROW(outfile, arrow::io::FileOutputStream::Open(out_path));
+
+  const auto arrow_properties =
+      ::parquet::ArrowWriterProperties::Builder().store_schema()->build();
 
   // Configure Parquet writer properties to use DELTA_BYTE_ARRAY encoding for
   // strings
   parquet::WriterProperties::Builder builder;
-  builder.disable_dictionary();
-  builder.encoding(parquet::Encoding::DELTA_BYTE_ARRAY);
+  builder.disable_dictionary()
+      ->encoding(parquet::Encoding::DELTA_BYTE_ARRAY)
+      ->compression(parquet::Compression::SNAPPY);
   // builder.encoding(0, parquet::Encoding::DELTA_BYTE_ARRAY);
+  const auto parquet_properties = builder.build();
 
-  std::shared_ptr<parquet::WriterProperties> properties = builder.build();
+  std::cout << "the type " << table->column(0)->type()->ToString(true)
+            << std::endl;
 
   // Write the table to the Parquet file using the specified properties
-  PARQUET_THROW_NOT_OK(parquet::arrow::WriteTable(
-      *table, arrow::default_memory_pool(), outfile,
-      parquet::DEFAULT_MAX_ROW_GROUP_LENGTH, properties));
+  PARQUET_THROW_NOT_OK(
+      parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), outfile,
+                                 parquet::DEFAULT_MAX_ROW_GROUP_LENGTH,
+                                 parquet_properties, arrow_properties));
 
   std::cout << "Parquet file created: " << out_path << ".  file size: "
             << std::filesystem::file_size(out_path) / 1024 / 1024 << "MB"

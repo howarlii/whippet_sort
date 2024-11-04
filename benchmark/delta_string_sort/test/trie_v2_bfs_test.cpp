@@ -27,7 +27,7 @@ public:
 
     auto end_time = std::chrono::steady_clock::now() - begin_time;
     LOG(INFO) << "insert time: "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(end_time)
+              << std::chrono::duration_cast<std::chrono::microseconds>(end_time)
                      .count()
               << "ms";
   }
@@ -37,22 +37,29 @@ public:
     res_prefix_lens.reserve(trie_.valueNum());
     a_values.reserve(trie_.valueNum());
 
-    auto f = [&](size_t prefix_len, std::string key, ValueT value) {
-      res_pref.emplace_back(std::move(key));
-      res_prefix_lens.push_back(prefix_len);
-      a_values.push_back(value);
-    };
+    // auto f = [&](size_t prefix_len, std::string key, ValueT value) {
+    //   res_pref.emplace_back(std::move(key));
+    //   res_prefix_lens.push_back(prefix_len);
+    //   a_values.push_back(value);
+    // };
 
     auto begin_time = std::chrono::steady_clock::now();
 
     trie_printer = std::make_unique<TriePrinter>(trie_.build());
+    if (index_only)
+      trie_printer->enableIndexOnly();
     trie_printer->preSort();
-    trie_printer->registerFunc(f);
+    // trie_printer->registerFunc(f);
     trie_printer->print();
+    for (auto &[prefix_len, key, value] : trie_printer->get_ans()) {
+      res_pref.emplace_back(std::move(key));
+      res_prefix_lens.push_back(prefix_len);
+      a_values.push_back(value);
+    }
 
     auto end_time = std::chrono::steady_clock::now() - begin_time;
     LOG(INFO) << "output time: "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(end_time)
+              << std::chrono::duration_cast<std::chrono::microseconds>(end_time)
                      .count()
               << "ms";
   }
@@ -77,7 +84,6 @@ TEST_F(TrieTestV2Bfs, t1) {
 }
 
 TEST_F(TrieTestV2Bfs, t2) {
-
   generate(1e6, 200);
   gen_done();
   insertAll();
@@ -86,7 +92,21 @@ TEST_F(TrieTestV2Bfs, t2) {
 }
 
 TEST_F(TrieTestV2Bfs, t2_2) {
+  // enable_debug = true;
 
+  // trie_ = TrieBuilderBfs(TrieConfig{.lazy_key_burst_lmt = 0});
+  generate(1e6, 1600);
+  generate(1e6, 1600);
+  generate(1e6, 1600);
+  generate(1e6, 1600);
+  gen_done();
+  insertAll();
+  outputIt();
+  check_res();
+}
+
+TEST_F(TrieTestV2Bfs, t2_3) {
+  index_only = true;
   // enable_debug = true;
 
   // trie_ = TrieBuilderBfs(TrieConfig{.lazy_key_burst_lmt = 0});

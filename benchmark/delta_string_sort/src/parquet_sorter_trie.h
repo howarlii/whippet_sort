@@ -48,6 +48,9 @@ public:
     trie_config_ = config;
   }
 
+  auto get_trie_builder() const { return trie_builder_.get(); }
+  auto get_trie_printer() const { return printer_.get(); }
+
   // Sort the column with the given index and return the sorted index list.
   std::shared_ptr<arrow::Array> sort_by_column() override {
     if (col_idx_ >= metadata_->num_columns()) {
@@ -60,26 +63,25 @@ public:
     }
     num_rows_ = metadata_->num_rows();
 
-    trie::TrieBuilder trie_builder(trie_config_);
+    trie_builder_ = std::make_unique<trie::TrieBuilder>(trie_config_);
     for (int i = 0; i < metadata_->num_row_groups(); ++i) {
       auto row_group = file_reader_->RowGroup(i);
       auto pager = row_group->GetColumnPageReader(col_idx_);
 
       auto col_sorter = std::make_unique<hack_parquet::ColumnTrieSorter<DType>>(
           column_descr, std::move(pager), nullptr);
-      col_sorter->SetTrieBuilder(&trie_builder);
+      col_sorter->SetTrieBuilder(trie_builder_.get());
 
       col_sorter->ReadAll(metadata_->RowGroup(i)->num_rows());
-
-      CHECK(col_sorter->GetChunks().empty()) << "???";
     }
-    trie_ = trie_builder.build();
+    trie_ = trie_builder_->build();
 
     return sort_index_;
   }
 
   void pre_sort() {
-    printer_ = std::make_unique<trie::TriePrinter>(std::move(trie_));
+    printer_ =
+        std::make_unique<trie::TriePrinter>(std::move(trie_), trie_config_);
     printer_->presort();
   }
 
@@ -174,8 +176,10 @@ protected:
   shared_ptr<parquet::FileMetaData> metadata_;
 
   trie::TrieConfig trie_config_;
+  std::unique_ptr<trie::TrieBuilder> trie_builder_;
   std::unique_ptr<trie::Trie<int>> trie_;
   std::unique_ptr<trie::TriePrinter> printer_;
+  bool index_only_ = false;
 
   // (prefix_len, key, value)
   std::vector<std::tuple<size_t, std::string, int>> results_;

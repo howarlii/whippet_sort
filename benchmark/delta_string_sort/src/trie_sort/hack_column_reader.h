@@ -301,8 +301,8 @@ public:
         break;
       }
       case Encoding::DELTA_BYTE_ARRAY: {
-        auto decoder =
-            MakeTypedDecoder<DType>(Encoding::DELTA_BYTE_ARRAY, descr_);
+        auto decoder = std::make_unique<DeltaByteArrayDecoder>(descr_);
+        // MakeTypedDecoder<DType>(Encoding::DELTA_BYTE_ARRAY, descr_);
         current_decoder_ = decoder.get();
         decoders_[static_cast<int>(encoding)] = std::move(decoder);
         break;
@@ -386,14 +386,15 @@ public:
                    std::unique_ptr<PageReader> pager, ::arrow::MemoryPool *pool)
       : ColumnReaderImplBase<DType>(descr, pool) {
     this->pager_ = std::move(pager);
-
-    auto ptr = std::make_unique<TrieSortDecoder<DType>>(descr, pool);
-    trie_sort_decoder_ = ptr.get();
-    this->decoders_[static_cast<int>(Encoding::DELTA_BYTE_ARRAY)] =
-        std::move(ptr);
   }
 
   void SetTrieBuilder(TrieBuilderBase *builder) {
+    auto ptr = std::make_unique<TrieSortDecoder<DType>>(
+        ColumnReaderImplBase<DType>::descr_,
+        ColumnReaderImplBase<DType>::pool_);
+    trie_sort_decoder_ = ptr.get();
+    this->decoders_[static_cast<int>(Encoding::DELTA_BYTE_ARRAY)] =
+        std::move(ptr);
     trie_sort_decoder_->SetTrieBuilder(builder);
   }
 
@@ -402,17 +403,18 @@ public:
   void ReadAll(int64_t tot_row_num) {
     HasNext();
     first_page_encoding_ = this->current_encoding_;
-    if (first_page_encoding_ != Encoding::DELTA_BYTE_ARRAY) {
-      if (!builder_.Reserve(tot_row_num).ok()) {
-        LOG(ERROR) << "Failed to reserve space for values";
-      };
-    }
+    // if (first_page_encoding_ != Encoding::DELTA_BYTE_ARRAY) {
+    //   if (!builder_.Reserve(tot_row_num).ok()) {
+    //     LOG(ERROR) << "Failed to reserve space for values";
+    //   };
+    // }
     while (HasNext()) {
       int num_values =
           static_cast<DataPage *>(this->current_page_.get())->num_values();
       DLOG(INFO) << "Reading next page " << num_values;
 
-      if (this->current_encoding_ == Encoding::DELTA_BYTE_ARRAY) {
+      if (this->current_encoding_ == Encoding::DELTA_BYTE_ARRAY &&
+          trie_sort_decoder_) {
         ReadValuesToTrie(num_values);
       } else {
         ReadRealValues(num_values);
@@ -423,19 +425,17 @@ public:
       }
     }
 
-    if (builder_.length()) {
-      std::shared_ptr<::arrow::Array> array;
-      if (!builder_.Finish(&array).ok()) {
-        // ... do something on array building failure
-        LOG(ERROR) << "Failed to build array";
-      }
-      chunks_.emplace_back(std::move(array));
-    }
+    // if (builder_.length()) {
+    //   std::shared_ptr<::arrow::Array> array;
+    //   if (!builder_.Finish(&array).ok()) {
+    //     // ... do something on array building failure
+    //     LOG(ERROR) << "Failed to build array";
+    //   }
+    //   chunks_.emplace_back(std::move(array));
+    // }
   }
 
-  std::vector<std::shared_ptr<::arrow::Array>> GetChunks() {
-    return std::move(chunks_);
-  }
+  void SetValueArray(std::vector<std::string> *values) { values_ = values; }
 
   auto &GetTrieBuilder() { return trie_sort_decoder_->GetTrieBuilder(); }
 
@@ -450,14 +450,11 @@ private:
     auto values_read =
         ColumnReaderImplBase<DType>::ReadValues(batch_size, buffer_.data());
     ConsumeBufferedValues(values_read);
-
-    for (size_t i = 0; i < values_read; i++) {
-      if (!builder_.Append(buffer_[i].ptr, buffer_[i].len).ok()) {
-        // ... do something on append failure
-        LOG(ERROR) << "Failed to append value";
-      }
+    CHECK(values_);
+    values_->reserve(values_->size() + values_read);
+    for (auto &v : buffer_) {
+      values_->emplace_back(reinterpret_cast<const char *>(v.ptr), v.len);
     }
-
     return values_read;
   }
 
@@ -470,13 +467,14 @@ private:
     return values_read;
   }
 
-  TrieSortDecoder<DType> *trie_sort_decoder_;
+  TrieSortDecoder<DType> *trie_sort_decoder_{nullptr};
   Encoding::type first_page_encoding_;
 
-  ::arrow::LargeStringBuilder builder_;
-  std::vector<std::shared_ptr<::arrow::Array>> chunks_;
+  // ::arrow::LargeStringBuilder builder_;
+  // std::vector<std::shared_ptr<::arrow::Array>> chunks_;
 
   std::vector<T> buffer_;
+  std::vector<std::string> *values_;
   int64_t num_read_values_{0}; // number of values have read
 };
 } // namespace whippet_sort::hack_parquet

@@ -26,6 +26,8 @@ struct TrieConfig {
 
   // lazy node brust limit
   int lazy_key_burst_lmt = 4096;
+
+  bool index_only = false;
 };
 
 template <typename ValueT> struct Trie {
@@ -116,6 +118,16 @@ public:
     insert_impl(prefix_len, std::move(key), value);
   }
 
+  size_t valueNum() const override { return trie_->value_num_; }
+
+  std::unique_ptr<Trie<ValueT>> build() {
+    auto ret = std::make_unique<Trie<ValueT>>();
+    ret.swap(trie_);
+    reset();
+    return ret;
+  }
+
+private:
   void insert_impl(size_t prefix_len, SemiStringView &&key, ValueT value) {
     if (prefix_len == 0) {
       curr_node_ = trie_->root_;
@@ -210,16 +222,6 @@ public:
     DCHECK(false) << "should not reach here";
   }
 
-  size_t valueNum() const override { return trie_->value_num_; }
-
-  std::unique_ptr<Trie<ValueT>> build() {
-    auto ret = std::make_unique<Trie<ValueT>>();
-    ret.swap(trie_);
-    reset();
-    return ret;
-  }
-
-private:
   void reset() {
     trie_ = std::make_unique<Trie<ValueT>>();
     trie_->root_->pdep = 0;
@@ -263,9 +265,14 @@ class TriePrinter {
   using Node = Trie<ValueT>::Node;
 
 public:
-  TriePrinter(std::unique_ptr<Trie<ValueT>> &&trie) : trie_(std::move(trie)) {
+  TriePrinter(std::unique_ptr<Trie<ValueT>> &&trie, TrieConfig config = {})
+      : trie_(std::move(trie)) {
     prefix_stack_.emplace(trie_->root_, 0);
+    if (config.index_only)
+      enableIndexOnly();
   }
+
+  void enableIndexOnly() { index_only_ = true; }
 
   void presort() {
     CHECK(!is_presorted_);
@@ -287,7 +294,8 @@ public:
     CHECK(is_presorted_);
     if (!lazy_keys_.empty()) {
       *prefix_len = prefix_str_len_ / kTranF;
-      *key = std::move(lazy_keys_.back().first);
+      if (!index_only_)
+        *key = std::move(lazy_keys_.back().first);
       *values = std::move(lazy_keys_.back().second);
       lazy_keys_.pop_back();
       return true;
@@ -302,6 +310,7 @@ public:
     uint8_t *idx = &idx_r;
 
     SemiString suf_str;
+    size_t suf_str_len = 0;
     while (node->values.empty()) {
       for (; *idx < kElementNum && node->children[*idx] == nullptr; ++(*idx))
         ;
@@ -309,7 +318,9 @@ public:
         node = node->children[*idx];
         ++(*idx);
         prefix_stack_.emplace(node, 0);
-        suf_str.append(node->str);
+        if (!index_only_)
+          suf_str.append(node->str);
+        suf_str_len += node->str.length();
       } else {
         // prefix_str_.pop_back(node->str.length());
         prefix_str_len_ -= node->str.length();
@@ -317,9 +328,10 @@ public:
         prefix_stack_.pop();
         if (prefix_stack_.empty())
           return false;
-        last_prefix_semichar_ = prefix_stack_.top().first->str.length()
-                                    ? prefix_stack_.top().first->str.back()
-                                    : 0;
+        if (!index_only_)
+          last_prefix_semichar_ = prefix_stack_.top().first->str.length()
+                                      ? prefix_stack_.top().first->str.back()
+                                      : 0;
       }
 
       auto &[node_r, idx_r] = prefix_stack_.top();
@@ -335,26 +347,30 @@ public:
     // 0; CHECK_EQ(qw, last_prefix_semichar_);
 
     // prefix_str_.append(suf_str);
-    prefix_str_len_ += suf_str.length();
+    prefix_str_len_ += suf_str_len;
 
     auto curr_last = last_prefix_semichar_;
-    if (suf_str.length()) {
+    if (!index_only_ && suf_str_len) {
       last_prefix_semichar_ = suf_str.back();
     }
 
     if (node->is_lazy_node) {
       *idx = kElementNum; // so that next time will pop this node
-      // handleLazyNode(node, lazy_keys_);
-      lazy_keys_ = std::move(node_lazy_keys_[node->id]);
 
-      std::move(suf_str).toString(key, curr_last);
-      key->append(lazy_keys_.back().first);
+      lazy_keys_ = std::move(node_lazy_keys_[node->id]);
+      if (!index_only_) {
+        std::move(suf_str).toString(key, curr_last);
+        key->append(lazy_keys_.back().first);
+      }
       *values = lazy_keys_.back().second;
       lazy_keys_.pop_back();
       return true;
     } else {
-      std::move(suf_str).toString(key, curr_last);
+      if (!index_only_)
+        std::move(suf_str).toString(key, curr_last);
     }
+    suf_str.clear();
+    suf_str_len = 0;
 
     *values = node->values.back();
     node->values.pop_back();
@@ -391,6 +407,7 @@ private:
   std::unique_ptr<Trie<ValueT>> trie_;
 
   std::stack<std::pair<Node *, uint8_t>> prefix_stack_;
+  bool index_only_{false};
   // SemiString prefix_str_;
   size_t prefix_str_len_ = 0;
   uint8_t last_prefix_semichar_ = 0;

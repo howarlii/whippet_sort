@@ -36,7 +36,7 @@ public:
 
     auto end_time = std::chrono::steady_clock::now() - begin_time;
     LOG(INFO) << "decode + std::sort time: "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(end_time)
+              << std::chrono::duration_cast<std::chrono::microseconds>(end_time)
                      .count()
               << "ms";
 
@@ -51,26 +51,21 @@ public:
   }
 
   void check_res() {
+    for (int i = 1; i < a_values.size(); ++i) {
+      ASSERT_EQ(a_original[a_values[i]], a_sorted[i].second)
+          << "on line: " << i << " a_values[i]:" << a_values[i];
+    }
+    if (index_only)
+      return;
+
     auto out = decodePrefixEecode(res_pref, res_prefix_lens, enable_debug);
 
     for (int i = 1; i < out.size(); ++i) {
       ASSERT_LE(out[i - 1], out[i]) << "on line: " << i;
     }
-    for (int i = 1; i < out.size(); ++i) {
-      ASSERT_EQ(a_original[a_values[i]], out[i])
-          << "on line: " << i << " a_values[i]:" << a_values[i];
-    }
 
-    // for (int i = 1; i < a_sorted.size(); ++i) {
-    //   ASSERT_LE(a_sorted[i - 1].second, a_sorted[i].second) << "on line: " <<
-    //   i;
-    // }
     ASSERT_EQ(out.size(), a_sorted.size());
     for (int i = 0; i < out.size(); ++i) {
-      ASSERT_TRUE((a_values[i] == a_sorted[i].first) ||
-                  (out[i] == a_sorted[i].second))
-          << fmt::format("on line: {}, values: trie/std: {}/{}", i, a_values[i],
-                         a_sorted[i].first);
       ASSERT_EQ(a_sorted[i].second, out[i])
           << fmt::format("on line: {}, values: trie/std: {}/{}", i, a_values[i],
                          a_sorted[i].first);
@@ -143,6 +138,7 @@ protected:
   std::vector<std::string> a_prefixs;
   std::vector<int> a_prefix_lens;
 
+  bool index_only = false;
   std::vector<int> a_values;
   std::vector<std::string> a_original;
   std::vector<std::pair<int, std::string>> a_sorted;

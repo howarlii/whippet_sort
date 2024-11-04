@@ -42,6 +42,8 @@ public:
   void set_trie_builder(std::unique_ptr<trie_v2::TrieBuilder> builder) {
     trie_builder_ = std::move(builder);
   }
+  auto get_trie_builder() const { return trie_builder_.get(); }
+  auto get_trie_printer() const { return printer_.get(); }
 
   // Sort the column with the given index and return the sorted index list.
   std::shared_ptr<arrow::Array> sort_by_column() override {
@@ -65,8 +67,6 @@ public:
       col_sorter->SetTrieBuilder(trie_builder_.get());
 
       col_sorter->ReadAll(metadata_->RowGroup(i)->num_rows());
-
-      CHECK(col_sorter->GetChunks().empty()) << "???";
     }
     trie_ = trie_builder_->build();
 
@@ -74,7 +74,8 @@ public:
   }
 
   void pre_sort() {
-    printer_ = std::make_unique<trie_v2::TriePrinter>(std::move(trie_));
+    printer_ =
+        std::make_unique<trie_v2::TriePrinter>(std::move(trie_), trie_config_);
     printer_->preSort();
   }
 
@@ -82,11 +83,8 @@ public:
 
   void print_trie() {
     results_.reserve(printer_->valueNum());
-    auto f = [&](size_t prefix_len, std::string key, int value) {
-      results_.emplace_back(prefix_len, std::move(key), value);
-    };
-    printer_->registerFunc(std::move(f));
     printer_->print();
+    results_ = std::move(printer_->get_ans());
   }
 
   void generate_result() override {

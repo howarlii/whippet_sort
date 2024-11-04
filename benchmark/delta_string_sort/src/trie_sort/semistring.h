@@ -210,6 +210,12 @@ public:
 
   size_t length() const { return length_; }
 
+  void clear() {
+    str_.clear();
+    is_first_half_ = false;
+    length_ = 0;
+  }
+
   void append(const SemiStringView &v) {
     if (length_ == 0) {
       str_ = v.str_;
