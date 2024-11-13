@@ -32,7 +32,8 @@ DEFINE_string(input_file,
               "Input file path");
 DEFINE_int32(sort_col_idx, 2, "Column index to sort by");
 DEFINE_double(std_dev_lmt, 0.15, "Standard deviation limit");
-DEFINE_int32(num_runs, 5, "Column index to sort by");
+DEFINE_int32(num_runs, 5, "number of runs");
+DEFINE_int32(warmup, 1, "number of warmup runs");
 DEFINE_bool(debug, false, "Debug mode");
 
 DEFINE_bool(hack_arrow, false, "Run high-level Arrow sorting benchmark");
@@ -87,8 +88,9 @@ int main(int argc, char *argv[]) {
     //   sorter->generate_result();
     //   return 0.0;
     // });
-    auto [arrow_median_ms, arrow_average_ms, std_dev] = Utils::benchmark(
-        "hack-Arrow", num_runs, std::move(steps), FLAGS_std_dev_lmt);
+    auto [arrow_median_ms, arrow_average_ms, std_dev] =
+        Utils::benchmark("hack-Arrow", num_runs, std::move(steps),
+                         FLAGS_std_dev_lmt, FLAGS_warmup);
 
     std::cout << "# hack-Arrow sorting - Median: " << arrow_median_ms
               << "ms, Average: " << arrow_average_ms
@@ -117,7 +119,7 @@ int main(int argc, char *argv[]) {
     // });
     auto [arrow_median_ms, arrow_average_ms, std_dev] =
         Utils::benchmark("hack-Arrow-BinaryArray", num_runs, std::move(steps),
-                         FLAGS_std_dev_lmt);
+                         FLAGS_std_dev_lmt, FLAGS_warmup);
 
     std::cout << "# hack-Arrow-BinaryArray sorting - Median: "
               << arrow_median_ms << "ms, Average: " << arrow_average_ms
@@ -143,7 +145,7 @@ int main(int argc, char *argv[]) {
     //   return 0.0;
     // });
     auto [arrow_median_ms, arrow_average_ms, std_dev] = Utils::benchmark(
-        "Arrow", num_runs, std::move(steps), FLAGS_std_dev_lmt);
+        "Arrow", num_runs, std::move(steps), FLAGS_std_dev_lmt, FLAGS_warmup);
 
     std::cout << "# Whippet sorting (Arrow) - Median: " << arrow_median_ms
               << "ms, Average: " << arrow_average_ms
@@ -189,8 +191,8 @@ int main(int argc, char *argv[]) {
         return 0.0;
       });
     }
-    auto [median, average, std_dev] =
-        Utils::benchmark("Trie", num_runs, std::move(steps), FLAGS_std_dev_lmt);
+    auto [median, average, std_dev] = Utils::benchmark(
+        "Trie", num_runs, std::move(steps), FLAGS_std_dev_lmt, FLAGS_warmup);
 
     std::cout << "# Whippet sorting (Trie) - Median: " << median
               << "ms, Average: " << average << "ms,  std_dev: " << std_dev
@@ -243,7 +245,7 @@ int main(int argc, char *argv[]) {
       });
     }
     auto [median, average, std_dev] = Utils::benchmark(
-        "TrieV2", num_runs, std::move(steps), FLAGS_std_dev_lmt);
+        "TrieV2", num_runs, std::move(steps), FLAGS_std_dev_lmt, FLAGS_warmup);
 
     std::cout << "# Whippet sorting (TrieV2) - Median: " << median
               << "ms, Average: " << average << "ms,  std_dev: " << std_dev
@@ -296,8 +298,9 @@ int main(int argc, char *argv[]) {
         return 0.0;
       });
     }
-    auto [median, average, std_dev] = Utils::benchmark(
-        "TrieV2Bfs", num_runs, std::move(steps), FLAGS_std_dev_lmt);
+    auto [median, average, std_dev] =
+        Utils::benchmark("TrieV2Bfs", num_runs, std::move(steps),
+                         FLAGS_std_dev_lmt, FLAGS_warmup);
 
     std::cout << "# Whippet sorting (TrieV2Bfs) - Median: " << median
               << "ms, Average: " << average << "ms,  std_dev: " << std_dev
