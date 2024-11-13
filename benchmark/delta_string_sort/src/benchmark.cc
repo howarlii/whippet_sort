@@ -27,13 +27,16 @@
 using namespace whippet_sort;
 
 DEFINE_string(input_file,
-              std::string(PROJECT_SOURCE_DIR) + "/data/input-2e5-100.parquet",
+              std::string(PROJECT_SOURCE_DIR) +
+                  "/data/input-20-150-sed0.parquet",
               "Input file path");
 DEFINE_int32(sort_col_idx, 2, "Column index to sort by");
+DEFINE_double(std_dev_lmt, 0.15, "Standard deviation limit");
+DEFINE_int32(num_runs, 5, "Column index to sort by");
 DEFINE_bool(debug, false, "Debug mode");
 
-DEFINE_bool(hi_arrow, false, "Run high-level Arrow sorting benchmark");
-DEFINE_bool(low_arrow, false, "Run low-level Arrow sorting benchmark");
+DEFINE_bool(hack_arrow, false, "Run high-level Arrow sorting benchmark");
+DEFINE_bool(arrow, false, "Run low-level Arrow sorting benchmark");
 DEFINE_bool(trie, false, "Run trie-based sorting benchmark");
 DEFINE_bool(trie_v2, false, "Run trie-based sorting benchmark v2");
 DEFINE_bool(trie_v2_bfs, false, "Run trie-based sorting benchmark v2 bfs");
@@ -47,7 +50,7 @@ int main(int argc, char *argv[]) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
 
   nice(-20);
-  const int num_runs = FLAGS_debug ? 1 : 5;
+  const int num_runs = FLAGS_debug ? 1 : FLAGS_num_runs;
 
   const uint32_t col_idx = FLAGS_sort_col_idx;
 
@@ -61,60 +64,90 @@ int main(int argc, char *argv[]) {
             << std::endl;
 
   // Check if any flags were set, if not, run all benchmarks
-  bool run_all =
-      !FLAGS_low_arrow && !FLAGS_trie && !FLAGS_trie_v2 && !FLAGS_trie_v2_bfs;
-  if (FLAGS_hi_arrow) {
+  bool run_all = !FLAGS_hack_arrow && !FLAGS_arrow && !FLAGS_trie &&
+                 !FLAGS_trie_v2 && !FLAGS_trie_v2_bfs;
+
+  if (FLAGS_hack_arrow || run_all) {
     // Benchmark Arrow sorting
     std::vector<std::pair<std::string, Utils::BenchmarkStep>> steps;
-    std::unique_ptr<whippet_sort::ParquetSorterArrow> sorter;
+    std::unique_ptr<whippet_sort::ParquetSorterHacked> sorter;
     steps.emplace_back("read", [&]() {
-      Utils::drop_file_cache(input_file);
-      sorter = std::make_unique<whippet_sort::ParquetSorterArrow>(input_file,
-                                                                  col_idx);
-      return std::chrono::microseconds(0);
+      // Utils::drop_file_cache(input_file);
+      sorter = std::make_unique<whippet_sort::ParquetSorterHacked>(input_file,
+                                                                   col_idx);
+      sorter->read_all();
+      return 0.0;
     });
     steps.emplace_back("sort", [&]() {
       // sorter.print_column();
       auto idx_array = sorter->sort_by_column();
-      return std::chrono::microseconds(0);
-    });
-    steps.emplace_back("generate result", [&]() {
-      sorter->generate_result();
-      return std::chrono::microseconds(0);
-    });
-    auto [arrow_median_us, arrow_average_us, std_dev] =
-        Utils::benchmark("hi-Arrow", num_runs, std::move(steps));
-
-    std::cout << "# hi-Arrow sorting - Median: " << arrow_median_us / 1000
-              << "ms, Average: " << arrow_average_us / 1000
-              << "ms, std_dev: " << std_dev / 1000 << std::endl;
-  }
-
-  if (FLAGS_low_arrow || run_all) {
-    std::vector<std::pair<std::string, Utils::BenchmarkStep>> steps;
-    std::unique_ptr<whippet_sort::ParquetSorterArrow> sorter;
-    steps.emplace_back("read", [&]() {
-      Utils::drop_file_cache(input_file);
-      sorter =
-          std::make_unique<whippet_sort::ParquetSorterArrow>(input_file, 0);
-      sorter->read_all();
-      return std::chrono::microseconds(0);
-    });
-    steps.emplace_back("sort", [&]() {
-      auto idx_array = sorter->sort_by_column();
-      return std::chrono::microseconds(0);
+      return 0.0;
     });
     // steps.emplace_back("generate result", [&]() {
     //   sorter->generate_result();
-    //   return std::chrono::microseconds(0);
+    //   return 0.0;
     // });
-    auto [arrow_median_us, arrow_average_us, std_dev] =
-        Utils::benchmark("low-Arrow", num_runs, std::move(steps));
+    auto [arrow_median_ms, arrow_average_ms, std_dev] = Utils::benchmark(
+        "hack-Arrow", num_runs, std::move(steps), FLAGS_std_dev_lmt);
 
-    std::cout << "# Whippet sorting (low-Arrow) - Median: "
-              << arrow_median_us / 1000
-              << "ms, Average: " << arrow_average_us / 1000
-              << "ms, std_dev: " << std_dev / 1000 << std::endl;
+    std::cout << "# hack-Arrow sorting - Median: " << arrow_median_ms
+              << "ms, Average: " << arrow_average_ms
+              << "ms, std_dev: " << std_dev << std::endl;
+  }
+
+  if (FLAGS_arrow || run_all) {
+    // Benchmark Arrow sorting
+    std::vector<std::pair<std::string, Utils::BenchmarkStep>> steps;
+    std::unique_ptr<whippet_sort::ParquetSorterHackedBinaryBuilder> sorter;
+    steps.emplace_back("read", [&]() {
+      // Utils::drop_file_cache(input_file);
+      sorter = std::make_unique<whippet_sort::ParquetSorterHackedBinaryBuilder>(
+          input_file, col_idx);
+      sorter->read_all();
+      return 0.0;
+    });
+    steps.emplace_back("sort", [&]() {
+      // sorter.print_column();
+      auto idx_array = sorter->sort_by_column();
+      return 0.0;
+    });
+    // steps.emplace_back("generate result", [&]() {
+    //   sorter->generate_result();
+    //   return 0.0;
+    // });
+    auto [arrow_median_ms, arrow_average_ms, std_dev] =
+        Utils::benchmark("hack-Arrow-BinaryArray", num_runs, std::move(steps),
+                         FLAGS_std_dev_lmt);
+
+    std::cout << "# hack-Arrow-BinaryArray sorting - Median: "
+              << arrow_median_ms << "ms, Average: " << arrow_average_ms
+              << "ms, std_dev: " << std_dev << std::endl;
+  }
+
+  if (false || run_all) {
+    std::vector<std::pair<std::string, Utils::BenchmarkStep>> steps;
+    std::unique_ptr<whippet_sort::ParquetSorterArrow> sorter;
+    steps.emplace_back("read", [&]() {
+      // Utils::drop_file_cache(input_file);
+      sorter =
+          std::make_unique<whippet_sort::ParquetSorterArrow>(input_file, 0);
+      sorter->read_all();
+      return 0.0;
+    });
+    steps.emplace_back("sort", [&]() {
+      auto idx_array = sorter->sort_by_column();
+      return 0.0;
+    });
+    // steps.emplace_back("generate result", [&]() {
+    //   sorter->generate_result();
+    //   return 0.0;
+    // });
+    auto [arrow_median_ms, arrow_average_ms, std_dev] = Utils::benchmark(
+        "Arrow", num_runs, std::move(steps), FLAGS_std_dev_lmt);
+
+    std::cout << "# Whippet sorting (Arrow) - Median: " << arrow_median_ms
+              << "ms, Average: " << arrow_average_ms
+              << "ms, std_dev: " << std_dev << std::endl;
   }
 
   if (FLAGS_trie || run_all) {
@@ -123,43 +156,45 @@ int main(int argc, char *argv[]) {
     config.lazy_dep_lmt = FLAGS_trie_lazy_dep_lmt;
     config.lazy_key_burst_lmt = FLAGS_trie_lazy_key_burst_lmt;
     config.index_only = !FLAGS_debug;
-    std::chrono::microseconds insert_time;
+    double insert_time_ms = 0;
 
     std::vector<std::pair<std::string, Utils::BenchmarkStep>> steps;
     steps.emplace_back("read", [&]() {
-      Utils::drop_file_cache(input_file);
-      auto start_time = std::chrono::high_resolution_clock::now();
+      // Utils::drop_file_cache(input_file);
+
+      struct timespec begin, end;
+      clock_gettime(CLOCK_REALTIME, &begin);
       sorter = std::make_unique<whippet_sort::ParquetSorterTrie>(input_file,
                                                                  col_idx);
       sorter->set_trie_config(config);
       auto idx_array = sorter->sort_by_column();
-      insert_time = sorter->get_trie_builder()->get_insert_time_us();
-      return std::chrono::duration_cast<std::chrono::microseconds>(
-                 std::chrono::high_resolution_clock::now() - start_time) -
-             insert_time;
+      insert_time_ms = sorter->get_trie_builder()->get_insert_time_ms();
+      clock_gettime(CLOCK_REALTIME, &end);
+      return (end.tv_sec - begin.tv_sec) * 1e3 +
+             (end.tv_nsec - begin.tv_nsec) / 1e6 - insert_time_ms;
     });
-    steps.emplace_back("build", [&]() { return insert_time; });
+    steps.emplace_back("build", [&]() { return insert_time_ms; });
 
     steps.emplace_back("pre-sort", [&]() {
       sorter->pre_sort();
-      return std::chrono::microseconds(0);
+      return 0.0;
     });
     steps.emplace_back("print-trie", [&]() {
       sorter->print_trie();
-      return std::chrono::microseconds(0);
+      return 0.0;
     });
     if (FLAGS_debug) {
       steps.emplace_back("generate result", [&]() {
         sorter->generate_result();
-        return std::chrono::microseconds(0);
+        return 0.0;
       });
     }
     auto [median, average, std_dev] =
-        Utils::benchmark("Trie", num_runs, std::move(steps));
+        Utils::benchmark("Trie", num_runs, std::move(steps), FLAGS_std_dev_lmt);
 
-    std::cout << "# Whippet sorting (Trie) - Median: " << median / 1000
-              << "ms, Average: " << average / 1000
-              << "ms,  std_dev: " << std_dev / 1000 << std::endl;
+    std::cout << "# Whippet sorting (Trie) - Median: " << median
+              << "ms, Average: " << average << "ms,  std_dev: " << std_dev
+              << std::endl;
     if (FLAGS_debug) {
       sorter->check_correctness();
     }
@@ -171,46 +206,48 @@ int main(int argc, char *argv[]) {
     // config.lazy_dep_lmt = FLAGS_trie_lazy_dep_lmt;
     config.lazy_key_burst_lmt = FLAGS_trie_lazy_key_burst_lmt;
     config.index_only = !FLAGS_debug;
-    std::chrono::microseconds insert_time;
+    double insert_time_ms = 0;
 
     std::vector<std::pair<std::string, Utils::BenchmarkStep>> steps;
     steps.emplace_back("read", [&]() {
-      Utils::drop_file_cache(input_file);
-      auto start_time = std::chrono::high_resolution_clock::now();
+      // Utils::drop_file_cache(input_file);
+
+      struct timespec begin, end;
+      clock_gettime(CLOCK_REALTIME, &begin);
       sorter = std::make_unique<whippet_sort::ParquetSorterTrieV2>(input_file,
                                                                    col_idx);
       sorter->set_trie_builder(std::make_unique<trie_v2::TrieBuilder>(config));
       auto idx_array = sorter->sort_by_column();
-      insert_time = sorter->get_trie_builder()->get_insert_time_us();
-      return std::chrono::duration_cast<std::chrono::microseconds>(
-                 std::chrono::high_resolution_clock::now() - start_time) -
-             insert_time;
+      insert_time_ms = sorter->get_trie_builder()->get_insert_time_ms();
+      clock_gettime(CLOCK_REALTIME, &end);
+      return (end.tv_sec - begin.tv_sec) * 1e3 +
+             (end.tv_nsec - begin.tv_nsec) / 1e6 - insert_time_ms;
     });
-    steps.emplace_back("build", [&]() { return insert_time; });
+    steps.emplace_back("build", [&]() { return insert_time_ms; });
 
     steps.emplace_back("pre-sort", [&]() {
       sorter->pre_sort();
       if (FLAGS_debug) {
         sorter->statistics();
       }
-      return std::chrono::microseconds(0);
+      return 0.0;
     });
     steps.emplace_back("print-trie", [&]() {
       sorter->print_trie();
-      return std::chrono::microseconds(0);
+      return 0.0;
     });
     if (FLAGS_debug) {
       steps.emplace_back("generate result", [&]() {
         sorter->generate_result();
-        return std::chrono::microseconds(0);
+        return 0.0;
       });
     }
-    auto [median, average, std_dev] =
-        Utils::benchmark("TrieV2", num_runs, std::move(steps));
+    auto [median, average, std_dev] = Utils::benchmark(
+        "TrieV2", num_runs, std::move(steps), FLAGS_std_dev_lmt);
 
-    std::cout << "# Whippet sorting (TrieV2) - Median: " << median / 1000
-              << "ms, Average: " << average / 1000
-              << "ms,  std_dev: " << std_dev / 1000 << std::endl;
+    std::cout << "# Whippet sorting (TrieV2) - Median: " << median
+              << "ms, Average: " << average << "ms,  std_dev: " << std_dev
+              << std::endl;
     if (FLAGS_debug) {
       sorter->check_correctness();
     }
@@ -222,47 +259,49 @@ int main(int argc, char *argv[]) {
     // config.lazy_dep_lmt = FLAGS_trie_lazy_dep_lmt;
     config.lazy_key_burst_lmt = FLAGS_trie_lazy_key_burst_lmt;
     config.index_only = !FLAGS_debug;
-    std::chrono::microseconds insert_time;
+    double insert_time_ms = 0;
 
     std::vector<std::pair<std::string, Utils::BenchmarkStep>> steps;
     steps.emplace_back("read", [&]() {
-      Utils::drop_file_cache(input_file);
-      auto start_time = std::chrono::high_resolution_clock::now();
+      // Utils::drop_file_cache(input_file);
+
+      struct timespec begin, end;
+      clock_gettime(CLOCK_REALTIME, &begin);
       sorter = std::make_unique<whippet_sort::ParquetSorterTrieV2>(input_file,
                                                                    col_idx);
       sorter->set_trie_builder(
           std::make_unique<trie_v2::TrieBuilderBfs>(config));
       auto idx_array = sorter->sort_by_column();
-      insert_time = sorter->get_trie_builder()->get_insert_time_us();
-      return std::chrono::duration_cast<std::chrono::microseconds>(
-                 std::chrono::high_resolution_clock::now() - start_time) -
-             insert_time;
+      insert_time_ms = sorter->get_trie_builder()->get_insert_time_ms();
+      clock_gettime(CLOCK_REALTIME, &end);
+      return (end.tv_sec - begin.tv_sec) * 1e3 +
+             (end.tv_nsec - begin.tv_nsec) / 1e6 - insert_time_ms;
     });
-    steps.emplace_back("build", [&]() { return insert_time; });
+    steps.emplace_back("build", [&]() { return insert_time_ms; });
 
     steps.emplace_back("pre-sort", [&]() {
       sorter->pre_sort();
       if (FLAGS_debug) {
         sorter->statistics();
       }
-      return std::chrono::microseconds(0);
+      return 0.0;
     });
     steps.emplace_back("print-trie", [&]() {
       sorter->print_trie();
-      return std::chrono::microseconds(0);
+      return 0.0;
     });
     if (FLAGS_debug) {
       steps.emplace_back("generate result", [&]() {
         sorter->generate_result();
-        return std::chrono::microseconds(0);
+        return 0.0;
       });
     }
-    auto [median, average, std_dev] =
-        Utils::benchmark("TrieV2Bfs", num_runs, std::move(steps));
+    auto [median, average, std_dev] = Utils::benchmark(
+        "TrieV2Bfs", num_runs, std::move(steps), FLAGS_std_dev_lmt);
 
-    std::cout << "# Whippet sorting (TrieV2Bfs) - Median: " << median / 1000
-              << "ms, Average: " << average / 1000
-              << "ms,  std_dev: " << std_dev / 1000 << std::endl;
+    std::cout << "# Whippet sorting (TrieV2Bfs) - Median: " << median
+              << "ms, Average: " << average << "ms,  std_dev: " << std_dev
+              << std::endl;
     if (FLAGS_debug) {
       sorter->check_correctness();
     }

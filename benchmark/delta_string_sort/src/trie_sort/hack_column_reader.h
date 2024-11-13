@@ -403,11 +403,13 @@ public:
   void ReadAll(int64_t tot_row_num) {
     HasNext();
     first_page_encoding_ = this->current_encoding_;
-    // if (first_page_encoding_ != Encoding::DELTA_BYTE_ARRAY) {
-    //   if (!builder_.Reserve(tot_row_num).ok()) {
-    //     LOG(ERROR) << "Failed to reserve space for values";
-    //   };
-    // }
+    CHECK(first_page_encoding_ == Encoding::DELTA_BYTE_ARRAY);
+    if (!values_) {
+      if (!builder_.Reserve(tot_row_num).ok()) {
+        LOG(ERROR) << "Failed to reserve space for values";
+      };
+    }
+
     while (HasNext()) {
       int num_values =
           static_cast<DataPage *>(this->current_page_.get())->num_values();
@@ -425,17 +427,22 @@ public:
       }
     }
 
-    // if (builder_.length()) {
-    //   std::shared_ptr<::arrow::Array> array;
-    //   if (!builder_.Finish(&array).ok()) {
-    //     // ... do something on array building failure
-    //     LOG(ERROR) << "Failed to build array";
-    //   }
-    //   chunks_.emplace_back(std::move(array));
-    // }
+    if (builder_.length()) {
+      std::shared_ptr<::arrow::Array> array;
+      if (!builder_.Finish(&array).ok()) {
+        // ... do something on array building failure
+        LOG(ERROR) << "Failed to build array";
+      }
+      chunks_.emplace_back(std::move(array));
+      builder_.Reset();
+    }
   }
 
   void SetValueArray(std::vector<std::string> *values) { values_ = values; }
+
+  std::vector<std::shared_ptr<::arrow::Array>> GetChunks() {
+    return std::move(chunks_);
+  }
 
   auto &GetTrieBuilder() { return trie_sort_decoder_->GetTrieBuilder(); }
 
@@ -447,13 +454,22 @@ private:
 
   int64_t ReadRealValues(int64_t batch_size) {
     buffer_.resize(batch_size);
-    auto values_read =
+    int64_t values_read =
         ColumnReaderImplBase<DType>::ReadValues(batch_size, buffer_.data());
     ConsumeBufferedValues(values_read);
-    CHECK(values_);
-    values_->reserve(values_->size() + values_read);
-    for (auto &v : buffer_) {
-      values_->emplace_back(reinterpret_cast<const char *>(v.ptr), v.len);
+    // CHECK(values_);
+    if (values_) {
+      values_->reserve(values_->size() + values_read);
+      for (auto &v : buffer_) {
+        values_->emplace_back(reinterpret_cast<const char *>(v.ptr), v.len);
+      }
+    } else {
+      for (size_t i = 0; i < values_read; i++) {
+        if (!builder_.Append(buffer_[i].ptr, buffer_[i].len).ok()) {
+          // ... do something on append failure
+          LOG(ERROR) << "Failed to append value";
+        }
+      }
     }
     return values_read;
   }
@@ -470,11 +486,11 @@ private:
   TrieSortDecoder<DType> *trie_sort_decoder_{nullptr};
   Encoding::type first_page_encoding_;
 
-  // ::arrow::LargeStringBuilder builder_;
-  // std::vector<std::shared_ptr<::arrow::Array>> chunks_;
+  ::arrow::LargeStringBuilder builder_;
+  std::vector<std::shared_ptr<::arrow::Array>> chunks_;
 
   std::vector<T> buffer_;
-  std::vector<std::string> *values_;
+  std::vector<std::string> *values_{nullptr};
   int64_t num_read_values_{0}; // number of values have read
 };
 } // namespace whippet_sort::hack_parquet

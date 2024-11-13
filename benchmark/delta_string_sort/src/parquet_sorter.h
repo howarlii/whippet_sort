@@ -281,6 +281,80 @@ protected:
 
   // (prefix_len, key, value)
   std::vector<std::string> original_values_;
+
+  // pair<value, idx>
   std::vector<std::pair<std::string_view, size_t>> sorted_col_;
+};
+
+class ParquetSorterHackedBinaryBuilder : public ParquetSorterHacked {
+public:
+  using ParquetSorterHacked::ParquetSorterHacked;
+
+  void read_all() {
+    if (col_idx_ >= metadata_->num_columns()) {
+      LOG(ERROR) << "Column index out of range.";
+    }
+
+    auto column_descr = metadata_->schema()->Column(col_idx_);
+    if (column_descr->physical_type() != DType::type_num) {
+      LOG(ERROR) << "Column is not a BYTE_ARRAY column.";
+    }
+    num_rows_ = metadata_->num_rows();
+    // original_values_.reserve(num_rows_);
+    std::vector<std::shared_ptr<::arrow::Array>> all_chunks;
+
+    for (int i = 0; i < metadata_->num_row_groups(); ++i) {
+      auto row_group = file_reader_->RowGroup(i);
+      auto pager = row_group->GetColumnPageReader(col_idx_);
+
+      auto col_sorter = std::make_unique<hack_parquet::ColumnTrieSorter<DType>>(
+          column_descr, std::move(pager), nullptr);
+      // col_sorter->SetValueArray(&original_values_);
+
+      col_sorter->ReadAll(metadata_->RowGroup(i)->num_rows());
+
+      auto chunks = col_sorter->GetChunks();
+      all_chunks.insert(all_chunks.end(), chunks.begin(), chunks.end());
+    }
+    // CHECK(original_values_.size() == num_rows_);
+
+    column_ = std::make_shared<::arrow::ChunkedArray>(std::move(all_chunks));
+    // std::iota(sorted_idx_.begin(), sorted_idx_.end(), 0);
+  }
+
+  std::shared_ptr<arrow::Array> sort_by_column() override {
+    // Sort the column
+    arrow::compute::SortOptions sort_options;
+    auto ret = arrow::compute::SortIndices(column_, sort_options, &exec_ctx_);
+    if (ret.ok()) {
+      sort_index_ = ret.ValueOrDie();
+    } else {
+      LOG(ERROR) << ret.status().message();
+    }
+
+    return sort_index_;
+  }
+
+  void generate_result() override {
+    arrow::compute::TakeOptions take_options;
+
+    auto ret =
+        arrow::compute::Take(column_, sort_index_, take_options, &exec_ctx_);
+
+    if (ret.ok()) {
+      sorted_column_ = ret.ValueOrDie().chunked_array();
+    } else {
+      throw std::runtime_error(ret.status().message());
+    }
+    DCHECK_EQ(sorted_column_->length(), num_rows_);
+    // sorted_column_ = sorted_table_->column(col_idx_);
+  }
+
+  size_t compute_hash() override { return ParquetSorterIf::compute_hash(); }
+
+private:
+  std::shared_ptr<arrow::ChunkedArray> column_;
+
+  arrow::compute::ExecContext exec_ctx_;
 };
 } // namespace whippet_sort

@@ -1,3 +1,4 @@
+import random
 import shutil
 import time
 import matplotlib.pyplot as plt
@@ -6,7 +7,11 @@ import subprocess
 import json
 import itertools
 import os
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
+from subprocess import check_output
+from re import findall
+import psutil
+import threading
 
 
 benchmark_dir = f"./log/{time.strftime('%m%d_%H%M%S')}/"
@@ -16,40 +21,89 @@ os.makedirs(benchmark_dir)
 burst_dep = 4
 burst_size_lmt = 4096
 
-row_sizes = ["2e6"]
+row_sizes = ["2e6", "2e7"]
 str_lengths = [10, 20, 100, 800, 1600]
 col_idxs = [0, 1, 2]
+method_args = ["arrow", "hack_arrow", "trie",
+               "trie_v2", "trie_v2_bfs"]
 # =======================================
 
-log_file = f"{benchmark_dir}/draw.log"
+log_file = f"{benchmark_dir}/benchmark.log"
+draw_log_file = f"{benchmark_dir}/draw.log"
 data_json_file = f"{benchmark_dir}/data.json"
 
 
 running_benchmark = f"{benchmark_dir}/benchmark_running"
-core_bind_id = "191"
-# core_bind_id = "95"
 
 
-def run_benchmark(data_path, sort_col_idx, lazy_dep_lmt, lazy_key_burst_lmt):
-    cmd = [
-        "taskset",
-        "-c",
-        core_bind_id,
-        running_benchmark,
-        f"--input_file={data_path}",
-        f"--trie_lazy_dep_lmt={lazy_dep_lmt}",
-        f"--trie_lazy_key_burst_lmt={lazy_key_burst_lmt}",
-        f"--sort_col_idx={sort_col_idx}",
-        # "--low_arrow",
-        # "--trie",
-    ]
+lock = threading.Lock()
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    print(result.stdout)
-    with open(log_file, 'a') as f:
+
+def get_a_bind_id_func():
+    """
+    Finds an idle CPU core with usage below a specified threshold.
+
+    Args:
+        threshold (int): Usage threshold below which a CPU core is considered idle.
+
+    Returns:
+        int: Index of an idle CPU core, or -1 if none are idle.
+    """
+    lock.acquire()
+    threshold = 10
+    while True:
+        cpu_percentages = psutil.cpu_percent(percpu=True, interval=0.1)
+        idle_cores = []
+        for i in range(0, len(cpu_percentages), 2):
+            if cpu_percentages[i] + cpu_percentages[i+1] < threshold:
+                idle_cores.append(i)
+        if len(idle_cores) > 0:
+            lock.release()
+            return str(random.choice(idle_cores))
+        # Wait a bit before checking again to avoid tight looping
+        time.sleep(1)
+        threshold += 1
+
+
+def run_benchmark(data_path, sort_col_idx, lazy_dep_lmt, lazy_key_burst_lmt, method):
+    time_to_sleep = 0.5
+    std_dev_lmt = 0.10
+    while True:
+        bind_core_id = get_a_bind_id_func()
+        print(
+            f"Running benchmark with data: {data_path}, sort_col_idx: {sort_col_idx}, lazy_dep_lmt: {lazy_dep_lmt}, lazy_key_burst_lmt: {lazy_key_burst_lmt},"
+            f" core_bind_id: {bind_core_id}  method: {method}")
+        cmd = [
+            "taskset",
+            "-c",
+            bind_core_id,
+            running_benchmark,
+            f"--input_file={data_path}",
+            f"--std_dev_lmt={std_dev_lmt}",
+            f"--trie_lazy_dep_lmt={lazy_dep_lmt}",
+            f"--trie_lazy_key_burst_lmt={lazy_key_burst_lmt}",
+            f"--sort_col_idx={sort_col_idx}",
+            f"--{method}",
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        # print(result.stdout)
+        with open(log_file, 'a') as f:
+            f.write(result.stdout + '\n')
+        with open(log_file, 'a') as f:
+            f.write(result.stderr + '\n')
+        if len(result.stderr) > 0:
+            print(result.stderr)
+        if result.returncode != 0:
+            if std_dev_lmt > 0.2:
+                return None
+            time.sleep(time_to_sleep)
+            std_dev_lmt += 0.01
+            continue
+        break
+
+    with open(draw_log_file, 'a') as f:
         f.write(result.stdout + '\n')
-    print(result.stderr)
-
     # Extract the JSON-like string from the output
     output_lines = result.stdout.strip().split('\n')
     json_line = "{" + \
@@ -70,26 +124,51 @@ def run_benchmark(data_path, sort_col_idx, lazy_dep_lmt, lazy_key_burst_lmt):
         return None
 
 
-def run_benchmark_and_draw(data_name, data_path="", col_idxs=[2], burst_dep=4, burst_size_lmt=4096):
-    if data_path == "":
-        data_path = f"./data/input-ty2-{data_name}.parquet"
+def run_benchmark_and_draw(data_name, seeds=["0"], col_idxs=[2], burst_dep=4, burst_size_lmt=4096):
+    step_time_avgs = dict()
 
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        tasks = dict()
+        for method in method_args:
+            tasks[method] = dict()
+            for col_idx in col_idxs:
+                tasks[method][col_idx] = dict()
+                for seed in seeds:
+                    data_path = f"/data/parquet_sorting/input-ty2-{data_name}-sed{seed}.parquet"
+                    tasks[method][col_idx][seed] = executor.submit(
+                        run_benchmark, data_path, col_idx, burst_dep, burst_size_lmt, method)
+                    time.sleep(0.5)
+
+        for col_idx in col_idxs:
+            for method0 in method_args:
+                for seed in seeds:
+                    result = tasks[method0][col_idx][seed].result()
+                    if result is None:
+                        continue
+                    if col_idx not in step_time_avgs:
+                        step_time_avgs[col_idx] = dict()
+                    for method, steps in result.items():
+                        if method not in step_time_avgs[col_idx]:
+                            step_time_avgs[col_idx][method] = dict()
+                        for step, time_ms in steps.items():
+                            if step not in step_time_avgs[col_idx][method]:
+                                step_time_avgs[col_idx][method][step] = []
+                            step_time_avgs[col_idx][method][step].append(
+                                time_ms)
+            # Average the values in the same slot
+            for method in step_time_avgs[col_idx]:
+                for step in step_time_avgs[col_idx][method]:
+                    t = step_time_avgs[col_idx][method][step]
+                    step_time_avgs[col_idx][method][step] = sum(t) / len(t)
+
+    # for col_idx in col_idxs:
+    #     step_time_avgs[col_idx] = run_benchmark(
+    #         data_path, col_idx, burst_dep, burst_size_lmt)
+
+    # Draw figures
     fig, axs = plt.subplots(1, len(col_idxs), figsize=(15, 5), sharey=True)
     if len(col_idxs) == 1:
         axs = [axs]  # Convert single axis to list for consistency
-
-    step_time_avgs = dict()
-    # with ProcessPoolExecutor() as executor:
-    #     tasks = dict()
-    #     for col_idx in col_idxs:
-    #         tasks[col_idx] = executor.submit(
-    #             run_benchmark, data_path, col_idx, burst_dep, burst_size_lmt)
-    #     for col_idx in col_idxs:
-    #         step_time_avgs[col_idx] = tasks[col_idx].result()
-    for col_idx in col_idxs:
-        step_time_avgs[col_idx] = run_benchmark(
-            data_path, col_idx, burst_dep, burst_size_lmt)
-
     for i, col_idx in enumerate(col_idxs):
         title_str = f"{data_name}-col{col_idx}-bdep{burst_dep}-bsize{burst_size_lmt}"
         step_time_avg = step_time_avgs[col_idx]
@@ -122,7 +201,7 @@ def run_benchmark_and_draw(data_name, data_path="", col_idxs=[2], burst_dep=4, b
 
                 # 在图中添加步骤名称和对应的时间
                 axs[i].text(index[j], bottom + step_time / 2,
-                            f'{step_name}\n{step_time}ms', ha='center', va='center', color='black', fontsize=8)
+                            f'{step_name}\n{step_time:.1f}ms', ha='center', va='center', color='black', fontsize=8)
 
                 # 更新底部位置以便堆叠
                 bottom += step_time
@@ -157,45 +236,47 @@ def run_benchmark_and_draw(data_name, data_path="", col_idxs=[2], burst_dep=4, b
     return step_time_avgs
 
 
-try:
-    shutil.copy2("./build/src/benchmark", running_benchmark)
-except OSError as e:
-    print(e)
-    print("Warning: Unable to copy the benchmark file. Out date executable might be used.")
-    user_input = input("Do you want to continue? (yes/no): ")
-    if user_input.lower() != 'yes':
-        print("Exiting the program.")
-        exit(0)
+def main():
+    try:
+        shutil.copy2("./build/src/benchmark", running_benchmark)
+    except OSError as e:
+        print(e)
+        print(
+            "Warning: Unable to copy the benchmark file. Out date executable might be used.")
+        user_input = input("Do you want to continue? (yes/no): ")
+        if user_input.lower() != 'yes':
+            print("Exiting the program.")
+            exit(0)
 
-shutil.copy2("./draw.py", f"{benchmark_dir}/draw.py")
+    shutil.copy2("./draw.py", f"{benchmark_dir}/draw.py")
 
-results = dict(dict())
+    results = dict(dict())
+
+    def func(length, size, col_idxs):
+        results[length][size] = run_benchmark_and_draw(f"{size}-{length}", ["0", "19260817", "114514", "1919810"],
+                                                       col_idxs, burst_dep, burst_size_lmt)
+        with open(data_json_file, 'w') as f:
+            f.write(json.dumps(results) + '\n')
+
+    for str_len in str_lengths:
+        results[str_len] = dict()
+
+    # for str_len in str_lengths:
+    #     func(str_len, "2e7", [1])
+
+    # for str_len in str_lengths:
+    #     func(str_len, "2e7", col_idxs)
+    # func(1600, "2e7", col_idxs)
+
+    for row_num in row_sizes:
+        for str_len in str_lengths:
+            func(str_len, row_num, col_idxs)
+
+    print("All benchmarks are done.")
+    print("========================")
+    print(json.dumps(results))
+    print("\n")
 
 
-def func(length, size, col_idxs):
-    results[length][size] = run_benchmark_and_draw(f"{size}-{length}", "",
-                                                   col_idxs, burst_dep, burst_size_lmt)
-
-
-for str_len in str_lengths:
-    results[str_len] = dict()
-
-# for str_len in str_lengths:
-#     func(str_len, "2e7", [1])
-
-for str_len in str_lengths:
-    func(str_len, "2e6", col_idxs)
-
-# for len in str_lengths:
-#     func(len, "2e6", [1])
-
-
-# os.remove(running_benchmark)
-
-print("All benchmarks are done.")
-print("========================")
-print(json.dumps(results))
-print("\n")
-
-with open(data_json_file, 'w') as f:
-    f.write(json.dumps(results) + '\n')
+main()
+# print(get_a_bind_id_func())

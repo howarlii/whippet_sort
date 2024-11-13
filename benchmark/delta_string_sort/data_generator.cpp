@@ -17,6 +17,7 @@
 DEFINE_string(n_rows, "20", "Number of rows (can be in scientific notation)");
 DEFINE_int32(str_len_avg, 150, "Average length of strings");
 DEFINE_int32(data_type, 2, "Type of data to generate");
+DEFINE_int32(seed, 0, "random seed");
 DEFINE_bool(debug, false, "debug mode");
 
 std::random_device rd;
@@ -66,7 +67,7 @@ generate_rnd_str_array(int n, int str_avg_len) {
 
   for (int t = 0; t < num_threads; ++t) {
     threads.emplace_back([&, t]() {
-      std::mt19937 gen(rd() + t);
+      std::mt19937 gen((rd() + t) ^ FLAGS_seed);
       std::uniform_int_distribution<> local_length_distribution(min_len,
                                                                 max_len);
       int start = t * n / num_threads;
@@ -108,7 +109,7 @@ generate_rnd_pref_str_array(int n, int str_avg_len, float sratio = 0.5) {
 
   for (int t = 0; t < num_threads; ++t) {
     threads.emplace_back([&, t]() {
-      std::mt19937 gen(rd() + t);
+      std::mt19937 gen((rd() + t) ^ FLAGS_seed);
       std::uniform_int_distribution<> local_length_distribution(min_len,
                                                                 max_len);
       std::uniform_real_distribution real_distribution(0.0, 1.0);
@@ -168,7 +169,7 @@ generate_block_pref_str_array(int n, int str_avg_len, float sratio = 0.5) {
 
   for (int t = 0; t < num_threads; ++t) {
     threads.emplace_back([&, t, &strs = thread_strings[t]]() {
-      std::mt19937 gen(rd() + t);
+      std::mt19937 gen((rd() + t) ^ FLAGS_seed);
       std::uniform_int_distribution<> local_length_distribution(min_bnum,
                                                                 max_bnum);
       std::uniform_real_distribution real_distribution(0.0, 1.0);
@@ -300,9 +301,11 @@ int main(int argc, char **argv) {
 
   // Output Parquet file
   std::shared_ptr<arrow::io::FileOutputStream> outfile;
-  auto out_path = std::string(PROJECT_SOURCE_DIR) +
-                  fmt::format("/data/input-ty{}-{}-{}.parquet", FLAGS_data_type,
-                              FLAGS_n_rows, FLAGS_str_len_avg);
+  auto out_path =
+      // std::string(PROJECT_SOURCE_DIR) +"/data/"
+      "/data/parquet_sorting/" + fmt::format("input-ty{}-{}-{}-sed{}.parquet",
+                                             FLAGS_data_type, FLAGS_n_rows,
+                                             FLAGS_str_len_avg, FLAGS_seed);
   PARQUET_ASSIGN_OR_THROW(outfile, arrow::io::FileOutputStream::Open(out_path));
 
   const auto arrow_properties =

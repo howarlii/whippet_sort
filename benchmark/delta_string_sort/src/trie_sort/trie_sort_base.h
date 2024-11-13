@@ -40,30 +40,33 @@ public:
 
   virtual size_t valueNum() const = 0;
 
-  auto get_insert_time_us() const { return insert_time_; }
+  auto get_insert_time_ms() const { return insert_time_ms_; }
 
 protected:
   struct Timer {
-    const std::chrono::time_point<std::chrono::system_clock> start_;
+    struct timespec start_tm_;
     TrieBuilderBase *base_;
 
-    Timer(TrieBuilderBase *base)
-        : start_(std::chrono::high_resolution_clock::now()), base_(base) {}
+    Timer(TrieBuilderBase *base) : base_(base) {
+      clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &start_tm_);
+    }
 
     ~Timer() { stop(); }
 
     void stop() {
       if (base_) {
-        base_->insert_time_ +=
-            std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::high_resolution_clock::now() - start_);
+        struct timespec end;
+        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
+        base_->insert_time_ms_ += (end.tv_sec - start_tm_.tv_sec) * 1e3 +
+                                  (end.tv_nsec - start_tm_.tv_nsec) / 1e6;
         base_->insert_time_cnt_++;
       }
       base_ = nullptr;
     }
   };
 
-  std::chrono::microseconds insert_time_{0};
+  double insert_time_ms_{0};
   size_t insert_time_cnt_;
 };
+
 } // namespace whippet_sort
