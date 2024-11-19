@@ -97,7 +97,7 @@ int main(int argc, char *argv[]) {
               << "ms, std_dev: " << std_dev << std::endl;
   }
 
-  if (FLAGS_arrow || run_all) {
+  if (false || run_all) {
     // Benchmark Arrow sorting
     std::vector<std::pair<std::string, Utils::BenchmarkStep>> steps;
     std::unique_ptr<whippet_sort::ParquetSorterHackedBinaryBuilder> sorter;
@@ -126,7 +126,7 @@ int main(int argc, char *argv[]) {
               << "ms, std_dev: " << std_dev << std::endl;
   }
 
-  if (false || run_all) {
+  if (FLAGS_arrow || run_all) {
     std::vector<std::pair<std::string, Utils::BenchmarkStep>> steps;
     std::unique_ptr<whippet_sort::ParquetSorterArrow> sorter;
     steps.emplace_back("read", [&]() {
@@ -165,13 +165,13 @@ int main(int argc, char *argv[]) {
       // Utils::drop_file_cache(input_file);
 
       struct timespec begin, end;
-      clock_gettime(CLOCK_REALTIME, &begin);
+      clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
       sorter = std::make_unique<whippet_sort::ParquetSorterTrie>(input_file,
                                                                  col_idx);
       sorter->set_trie_config(config);
       auto idx_array = sorter->sort_by_column();
       insert_time_ms = sorter->get_trie_builder()->get_insert_time_ms();
-      clock_gettime(CLOCK_REALTIME, &end);
+      clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
       return (end.tv_sec - begin.tv_sec) * 1e3 +
              (end.tv_nsec - begin.tv_nsec) / 1e6 - insert_time_ms;
     });
@@ -215,13 +215,13 @@ int main(int argc, char *argv[]) {
       // Utils::drop_file_cache(input_file);
 
       struct timespec begin, end;
-      clock_gettime(CLOCK_REALTIME, &begin);
+      clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
       sorter = std::make_unique<whippet_sort::ParquetSorterTrieV2>(input_file,
                                                                    col_idx);
       sorter->set_trie_builder(std::make_unique<trie_v2::TrieBuilder>(config));
       auto idx_array = sorter->sort_by_column();
       insert_time_ms = sorter->get_trie_builder()->get_insert_time_ms();
-      clock_gettime(CLOCK_REALTIME, &end);
+      clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
       return (end.tv_sec - begin.tv_sec) * 1e3 +
              (end.tv_nsec - begin.tv_nsec) / 1e6 - insert_time_ms;
     });
@@ -268,14 +268,14 @@ int main(int argc, char *argv[]) {
       // Utils::drop_file_cache(input_file);
 
       struct timespec begin, end;
-      clock_gettime(CLOCK_REALTIME, &begin);
+      clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
       sorter = std::make_unique<whippet_sort::ParquetSorterTrieV2>(input_file,
                                                                    col_idx);
       sorter->set_trie_builder(
           std::make_unique<trie_v2::TrieBuilderBfs>(config));
       auto idx_array = sorter->sort_by_column();
       insert_time_ms = sorter->get_trie_builder()->get_insert_time_ms();
-      clock_gettime(CLOCK_REALTIME, &end);
+      clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
       return (end.tv_sec - begin.tv_sec) * 1e3 +
              (end.tv_nsec - begin.tv_nsec) / 1e6 - insert_time_ms;
     });

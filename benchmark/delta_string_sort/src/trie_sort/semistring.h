@@ -106,19 +106,28 @@ public:
     // if (!rhs.inplace_str_enabled_) {
     //   rhs.load_inplace_str();
     // }
+    auto length = std::min(this->length(), rhs.length());
+
+    // auto mismatch_pair =
+    //     std::mismatch(str_.begin() + i, str_.end(), rhs.str_.begin() + i);
+    // i = std::min(length,
+    //              std::distance(str_.begin() + i, mismatch_pair.first) *
+    //              kTranF +
+    //                  i);
 
     using CmpT = size_t;
     constexpr auto gap = sizeof(CmpT) / sizeof(uint8_t) * kTranF;
-    for (; i + gap < length() && i + gap < rhs.length(); i += gap) {
+    for (; i + gap < length; i += gap) {
       auto p1 = *reinterpret_cast<const CmpT *>(str_.data() + (i + 1) / 2);
       auto p2 = *reinterpret_cast<const CmpT *>(rhs.str_.data() + (i + 1) / 2);
       if (auto t = p1 ^ p2) {
         break;
       }
     }
-    for (; i < length() && i < rhs.length(); ++i) {
+
+    for (; i < length; ++i) {
       if ((*this)[i] != rhs[i]) {
-        return i;
+        break;
       }
     }
 

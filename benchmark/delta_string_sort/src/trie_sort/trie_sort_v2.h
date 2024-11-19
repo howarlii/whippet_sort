@@ -68,6 +68,10 @@ namespace {
 template <typename T>
 size_t prefix_eq_len(const T &x, size_t x_pos, const std::string &y,
                      size_t y_pos) {
+  // auto mismatch_pair =
+  //     std::mismatch(x.begin() + x_pos, x.end(), y.begin() + y_pos);
+  // return std::distance(x.begin() + x_pos, mismatch_pair.first);
+
   size_t i = 0;
   auto len = std::min(x.length() - x_pos, y.length() - y_pos);
   using CmpT = size_t;
@@ -84,7 +88,6 @@ size_t prefix_eq_len(const T &x, size_t x_pos, const std::string &y,
       return i;
     }
   }
-
   return i;
 }
 } // namespace

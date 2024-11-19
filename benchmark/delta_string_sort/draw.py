@@ -67,7 +67,7 @@ def get_a_bind_id_func():
 
 def run_benchmark(data_path, sort_col_idx, lazy_dep_lmt, lazy_key_burst_lmt, method):
     time_to_sleep = 0.5
-    std_dev_lmt = 0.10
+    std_dev_lmt = 0.15
     while True:
         bind_core_id = get_a_bind_id_func()
         print(
