@@ -26,23 +26,23 @@ std::mt19937 mt_generator(rd());
 const int kNumThreads = std::min<int>(32, std::thread::hardware_concurrency());
 
 // Function to convert scientific notation string to int
-int scientific_to_int(const std::string &s) {
-  return static_cast<int>(std::stod(s));
+size_t scientific_to_int(const std::string &s) {
+  return static_cast<size_t>(std::stod(s));
 }
 
 arrow::Result<std::shared_ptr<arrow::Array>> generate_rnd_int_array(size_t n,
                                                                     int range) {
   std::vector<std::thread> threads;
-  auto num_threads = std::min<int>(kNumThreads, n / 1e5 + 1);
+  auto num_threads = std::min<size_t>(kNumThreads, n / 1e5 + 1);
   std::vector<int> result(n);
 
   for (int t = 0; t < num_threads; ++t) {
     threads.emplace_back([&, t]() {
       std::mt19937 gen((rd() + t) ^ FLAGS_seed);
       std::uniform_int_distribution<> local_length_distribution(0, range);
-      int start = t * n / num_threads;
-      int end = (t + 1) * n / num_threads;
-      for (int i = start; i < end; ++i) {
+      size_t start = t * n / num_threads;
+      size_t end = (t + 1) * n / num_threads;
+      for (size_t i = start; i < end; ++i) {
         result[i] = local_length_distribution(gen);
       }
     });
@@ -62,7 +62,7 @@ arrow::Result<std::shared_ptr<arrow::Array>> generate_rnd_int_array(size_t n,
   return array;
 }
 
-std::shared_ptr<arrow::Table> gen_type1(int n) {
+std::shared_ptr<arrow::Table> gen_type1(size_t n) {
   std::vector<std::shared_ptr<arrow::Array>> columns(3);
   std::vector<std::thread> threads;
 
@@ -101,8 +101,7 @@ std::shared_ptr<arrow::Table> gen_type1(int n) {
 
 int main(int argc, char **argv) {
   google::ParseCommandLineFlags(&argc, &argv, true);
-  int n = scientific_to_int(FLAGS_n_rows);
-  // int str_avg_len = FLAGS_str_len_avg;
+  auto n = scientific_to_int(FLAGS_n_rows);
 
   std::shared_ptr<arrow::Table> table;
   if (FLAGS_data_type == 1)
