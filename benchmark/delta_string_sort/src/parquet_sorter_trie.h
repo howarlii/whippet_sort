@@ -34,13 +34,13 @@ namespace whippet_sort {
 
 typedef uint32_t IndexType;
 
-class ParquetSorterTrie : public ParquetSorterIf {
+class ParquetSorterTrie : public ParquetReader {
 public:
   // using DType = parquet::ByteArray;
   using DType = parquet::ByteArrayType;
 
   ParquetSorterTrie(string input_file, uint32_t col_idx)
-      : ParquetSorterIf(std::move(input_file), col_idx) {
+      : ParquetReader(std::move(input_file), col_idx) {
     open_file();
   }
 

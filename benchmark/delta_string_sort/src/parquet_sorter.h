@@ -40,14 +40,14 @@ using std::vector;
 
 typedef uint32_t IndexType;
 
-class ParquetSorterIf {
+class ParquetReader {
 public:
-  virtual ~ParquetSorterIf() = default;
+  virtual ~ParquetReader() = default;
 
   // Disable copy & move constructors for now to avoid unexpected behaviour.
   // Adjust later if needed.
-  ParquetSorterIf(const ParquetSorterIf &) = delete;
-  ParquetSorterIf &operator=(const ParquetSorterIf &) = delete;
+  ParquetReader(const ParquetReader &) = delete;
+  ParquetReader &operator=(const ParquetReader &) = delete;
 
   // Sort the column with the given index and return the sorted index list.
   virtual std::shared_ptr<arrow::Array> sort_by_column() = 0;
@@ -90,7 +90,7 @@ public:
 
 protected:
   // Only internal use. For construction, use create() instead.
-  ParquetSorterIf(string input_file, uint32_t col_idx)
+  ParquetReader(string input_file, uint32_t col_idx)
       : input_file_(std::move(input_file)), col_idx_(col_idx) {}
 
   static string ParquetPageTypeToString(parquet::PageType::type type) {
@@ -118,10 +118,10 @@ protected:
   std::shared_ptr<arrow::ChunkedArray> sorted_column_;
 };
 
-class ParquetSorterArrow : public ParquetSorterIf {
+class ParquetSorterArrow : public ParquetReader {
 public:
   ParquetSorterArrow(string input_file, uint32_t col_idx)
-      : ParquetSorterIf(std::move(input_file), col_idx) {}
+      : ParquetReader(std::move(input_file), col_idx) {}
 
   virtual ~ParquetSorterArrow() = default;
 
@@ -196,13 +196,13 @@ private:
   arrow::compute::ExecContext exec_ctx_;
 };
 
-class ParquetSorterHacked : public ParquetSorterIf {
+class ParquetSorterHacked : public ParquetReader {
 public:
   // using DType = parquet::ByteArray;
   using DType = parquet::ByteArrayType;
 
   ParquetSorterHacked(string input_file, uint32_t col_idx)
-      : ParquetSorterIf(std::move(input_file), col_idx) {
+      : ParquetReader(std::move(input_file), col_idx) {
     open_file();
   }
 
@@ -350,7 +350,7 @@ public:
     // sorted_column_ = sorted_table_->column(col_idx_);
   }
 
-  size_t compute_hash() override { return ParquetSorterIf::compute_hash(); }
+  size_t compute_hash() override { return ParquetReader::compute_hash(); }
 
 private:
   std::shared_ptr<arrow::ChunkedArray> column_;
