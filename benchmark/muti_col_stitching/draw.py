@@ -86,6 +86,7 @@ def run_benchmark(data_path, method):
             f.write(result.stderr + '\n')
         if len(result.stderr) > 0:
             print(result.stderr)
+
         if result.returncode != 0:
             if std_dev_lmt > 0.2:
                 return None

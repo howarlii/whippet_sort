@@ -62,6 +62,7 @@ std::vector<size_t> sort_std() {
 
   std::vector<size_t> idx;
   helper.add_step("sort", [&]() {
+    idx.resize(num_rows);
     std::iota(idx.begin(), idx.end(), 0);
 
     std::sort(idx.begin(), idx.end(), [&](int i, int j) {
@@ -84,6 +85,10 @@ std::vector<size_t> sort_std() {
   std::cout << "# sort_std sorting - Median: " << mid << "ms, Average: " << mid
             << "ms, std_dev: " << std_dev << std::endl;
 
+  if (std_dev / avg > FLAGS_std_dev_lmt) {
+    LOG(ERROR) << "Standard deviation is too high: " << std_dev;
+    exit(1);
+  }
   return idx;
 }
 
@@ -106,7 +111,7 @@ void sort_1by1() {
   int time_sorting = 0;
   int time_grouping = 0;
 
-  helper.add_step("sort", [&]() {
+  helper.add_step("stitching", [&]() {
     utils::Timer timer;
     time_stitching = time_sorting = time_grouping = 0;
 
@@ -200,6 +205,11 @@ void sort_1by1() {
     // std::cout << "Sorting is correct" << std::endl;
     LOG(INFO) << "Sorting is correct";
   }
+
+  if (std_dev / avg > FLAGS_std_dev_lmt) {
+    LOG(ERROR) << "Standard deviation is too high: " << std_dev;
+    exit(1);
+  }
 }
 
 void sort_stitch_all() {
@@ -281,6 +291,10 @@ void sort_stitch_all() {
     }
     // std::cout << "Sorting is correct" << std::endl;
     LOG(INFO) << "Sorting is correct";
+  }
+  if (std_dev / avg > FLAGS_std_dev_lmt) {
+    LOG(ERROR) << "Standard deviation is too high: " << std_dev;
+    exit(1);
   }
 }
 
