@@ -2,6 +2,7 @@
 
 # Array of row counts
 row_counts=("2e6" "2e7" "2e8" "2e9")
+# row_counts=("2e10")
 
 # Array of seeds
 seeds=(0 19260817 114514 1919810)

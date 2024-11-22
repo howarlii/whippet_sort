@@ -42,23 +42,24 @@ public:
     ARROW_ABORT_NOTOK(open_file());
   }
 
-  std::vector<int> read_col_int32(int col_idx) {
+  template <typename T> std::vector<T> read_col_int32(int col_idx) {
     std::shared_ptr<arrow::ChunkedArray> column;
     ARROW_ABORT_NOTOK(reader_->ReadColumn(col_idx, &column));
     auto num_rows = column->length();
 
     DLOG(INFO) << "column type: " << column->type()->ToString();
 
-    std::vector<int> res;
+    std::vector<T> res;
     res.reserve(num_rows);
     for (size_t i = 0; i < column->num_chunks(); ++i) {
       auto chunk = column->chunk(i);
       auto int_chunk =
           std::dynamic_pointer_cast<arrow::Int32Array>(chunk)->raw_values();
+      // auto ret_chunk = static_cast<const T *>(int_chunk);
       CHECK(int_chunk) << "Failed to cast to Int32Array, col_idx " << col_idx
                        << "  column type: " << column->type()->ToString();
       for (size_t j = 0; j < chunk->length(); ++j) {
-        res.push_back(int_chunk[j]);
+        res.emplace_back(int_chunk[j]);
       }
     }
     return res;

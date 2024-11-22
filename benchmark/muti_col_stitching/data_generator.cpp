@@ -63,22 +63,15 @@ arrow::Result<std::shared_ptr<arrow::Array>> generate_rnd_int_array(size_t n,
 }
 
 std::shared_ptr<arrow::Table> gen_type1(size_t n) {
-  std::vector<std::shared_ptr<arrow::Array>> columns(3);
+  const int range = 1 << 10;
+  const int num_cols = 5;
+
+  std::vector<std::shared_ptr<arrow::Array>> columns(num_cols);
   std::vector<std::thread> threads;
-
-  threads.emplace_back([&]() {
-    // random select words to construct string with random prefix length
-    columns[0] = generate_rnd_int_array(n, 1 << 10).ValueOrDie();
-  });
-  threads.emplace_back([&]() {
-    // total random strings
-    columns[1] = generate_rnd_int_array(n, 1 << 20).ValueOrDie();
-  });
-  threads.emplace_back([&]() {
-    // random prefix length + random prefix strings
-    columns[2] = generate_rnd_int_array(n, 1 << 30).ValueOrDie();
-  });
-
+  for (auto &col : columns) {
+    threads.emplace_back(
+        [&]() { col = generate_rnd_int_array(n, range).ValueOrDie(); });
+  }
   for (auto &thread : threads) {
     thread.join();
   }
@@ -89,10 +82,12 @@ std::shared_ptr<arrow::Table> gen_type1(size_t n) {
     return nullptr;
   }
 
+  arrow::FieldVector fields;
+  for (size_t i = 0; i < num_cols; ++i) {
+    fields.push_back(arrow::field(fmt::format("column{}", i), arrow::int32()));
+  }
   // Create a schema with one string column
-  auto schema = arrow::schema({arrow::field("column0", arrow::int32()),
-                               arrow::field("column1", arrow::int32()),
-                               arrow::field("column2", arrow::int32())});
+  auto schema = arrow::schema(fields);
 
   // Create a table from the array
   auto table = arrow::Table::Make(schema, columns);

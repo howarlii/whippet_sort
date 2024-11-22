@@ -38,25 +38,24 @@ DEFINE_int32(num_runs, 1, "number of runs");
 DEFINE_int32(warmup, 0, "number of warmup runs");
 DEFINE_bool(debug, false, "Debug mode");
 
+DEFINE_int32(num_cols, 3, "number of columns to sort");
+
 DEFINE_bool(std, false, "");
 DEFINE_bool(o_by_o, false, "");
 DEFINE_bool(stitching_all, false, "");
-// DEFINE_bool(arrow, false, "Run low-level Arrow sorting benchmark");
-// DEFINE_bool(trie, false, "Run trie-based sorting benchmark");
-// DEFINE_bool(trie_v2, false, "Run trie-based sorting benchmark v2");
-// DEFINE_bool(trie_v2_bfs, false, "Run trie-based sorting benchmark v2 bfs");
 
-std::vector<size_t> sort_std() {
+std::vector<size_t> sort_std(int num_cols) {
   utils::BenchmarkHelper helper("std");
   size_t num_rows;
-  std::vector<int> col0, col1, col2;
+  std::vector<std::vector<uint32_t>> cols;
+  cols.resize(num_cols);
 
   helper.add_step("read", [&]() {
     auto reader = std::make_unique<ParquetReaderVec>(FLAGS_input_file);
-    col0 = reader->read_col_int32(0);
-    col1 = reader->read_col_int32(1);
-    col2 = reader->read_col_int32(2);
-    num_rows = col0.size();
+    for (size_t i = 0; i < num_cols; ++i) {
+      cols[i] = reader->read_col_int32<uint32_t>(i);
+    }
+    num_rows = cols[0].size();
     return 0.0;
   });
 
@@ -66,13 +65,12 @@ std::vector<size_t> sort_std() {
     std::iota(idx.begin(), idx.end(), 0);
 
     std::sort(idx.begin(), idx.end(), [&](int i, int j) {
-      if (col0[i] != col0[j]) {
-        return col0[i] < col0[j];
+      for (size_t k = 0; k < num_cols; ++k) {
+        if (cols[k][i] != cols[k][j]) {
+          return cols[k][i] < cols[k][j];
+        }
       }
-      if (col1[i] != col1[j]) {
-        return col1[i] < col1[j];
-      }
-      return col2[i] < col2[j];
+      return false;
     });
     return 0.0;
   });
@@ -85,24 +83,26 @@ std::vector<size_t> sort_std() {
   std::cout << "# sort_std sorting - Median: " << mid << "ms, Average: " << mid
             << "ms, std_dev: " << std_dev << std::endl;
 
-  if (std_dev / avg > FLAGS_std_dev_lmt) {
-    LOG(ERROR) << "Standard deviation is too high: " << std_dev;
+  auto rate = std_dev / avg;
+  if (rate > FLAGS_std_dev_lmt) {
+    LOG(ERROR) << "Standard deviation is too high: " << rate;
     exit(1);
   }
   return idx;
 }
 
-void sort_1by1() {
+void sort_1by1(int num_cols) {
   utils::BenchmarkHelper helper("1by1");
   size_t num_rows;
-  std::vector<int> col0, col1, col2;
+  std::vector<std::vector<uint32_t>> cols;
+  cols.resize(num_cols);
 
   helper.add_step("read", [&]() {
     auto reader = std::make_unique<ParquetReaderVec>(FLAGS_input_file);
-    col0 = reader->read_col_int32(0);
-    col1 = reader->read_col_int32(1);
-    col2 = reader->read_col_int32(2);
-    num_rows = col0.size();
+    for (size_t i = 0; i < num_cols; ++i) {
+      cols[i] = reader->read_col_int32<uint32_t>(i);
+    }
+    num_rows = cols[0].size();
     return 0.0;
   });
 
@@ -115,61 +115,29 @@ void sort_1by1() {
     utils::Timer timer;
     time_stitching = time_sorting = time_grouping = 0;
 
+    timer.start();
     idx.resize(num_rows);
     std::iota(idx.begin(), idx.end(), 0);
+    timer.stop();
+    time_grouping += timer.get_ms();
 
     std::vector<std::pair<size_t, size_t>> grouping = {{0, num_rows}};
-    {
-      stitch::StitchingSorterOperator<4> r(num_rows, idx, std::move(grouping));
+    for (size_t col_idx = 0; col_idx < num_cols; ++col_idx) {
+      auto r = stitch::createStitchingSorterOperator(4);
+      r->init(num_rows, &idx, std::move(grouping));
 
       timer.start();
-      r.setData(col0);
+      r->setData(cols[col_idx]);
       timer.stop();
       time_stitching += timer.get_ms();
 
       timer.start();
-      r.sort();
+      r->sort();
       timer.stop();
       time_sorting += timer.get_ms();
 
       timer.start();
-      grouping = r.grouping();
-      timer.stop();
-      time_grouping += timer.get_ms();
-    }
-    {
-      stitch::StitchingSorterOperator<4> r(num_rows, idx, std::move(grouping));
-
-      timer.start();
-      r.setData(col1);
-      timer.stop();
-      time_stitching += timer.get_ms();
-
-      timer.start();
-      r.sort();
-      timer.stop();
-      time_sorting += timer.get_ms();
-
-      timer.start();
-      grouping = r.grouping();
-      timer.stop();
-      time_grouping += timer.get_ms();
-    }
-    {
-      stitch::StitchingSorterOperator<4> r(num_rows, idx, std::move(grouping));
-
-      timer.start();
-      r.setData(col2);
-      timer.stop();
-      time_stitching += timer.get_ms();
-
-      timer.start();
-      r.sort();
-      timer.stop();
-      time_sorting += timer.get_ms();
-
-      timer.start();
-      grouping = r.grouping();
+      grouping = r->grouping();
       timer.stop();
       time_grouping += timer.get_ms();
     }
@@ -191,38 +159,38 @@ void sort_1by1() {
       auto x = idx[i - 1];
       auto y = idx[i];
 
-      if (col0[x] != col0[y]) {
-        CHECK_LT(col0[x], col0[y])
-            << "i: " << i << ", x: " << x << ", y: " << y;
-      } else if (col1[x] != col1[y]) {
-        CHECK_LT(col1[x], col1[y])
-            << "i: " << i << ", x: " << x << ", y: " << y;
-      } else {
-        CHECK_LE(col2[x], col2[y])
-            << "i: " << i << ", x: " << x << ", y: " << y;
+      for (size_t col_idx = 0; col_idx < num_cols; ++col_idx) {
+        if (cols[col_idx][x] != cols[col_idx][y]) {
+          CHECK_LT(cols[col_idx][x], cols[col_idx][y])
+              << "col_idx: " << col_idx << "  i: " << i << ", x: " << x
+              << ", y: " << y;
+          break;
+        }
       }
     }
     // std::cout << "Sorting is correct" << std::endl;
     LOG(INFO) << "Sorting is correct";
   }
 
-  if (std_dev / avg > FLAGS_std_dev_lmt) {
-    LOG(ERROR) << "Standard deviation is too high: " << std_dev;
+  auto rate = std_dev / avg;
+  if (rate > FLAGS_std_dev_lmt) {
+    LOG(ERROR) << "Standard deviation is too high: " << rate;
     exit(1);
   }
 }
 
-void sort_stitch_all() {
+void sort_stitch_all(int num_cols) {
   utils::BenchmarkHelper helper("stitching_all");
   size_t num_rows;
-  std::vector<int> col0, col1, col2;
+  std::vector<std::vector<uint32_t>> cols;
+  cols.resize(num_cols);
 
   helper.add_step("read", [&]() {
     auto reader = std::make_unique<ParquetReaderVec>(FLAGS_input_file);
-    col0 = reader->read_col_int32(0);
-    col1 = reader->read_col_int32(1);
-    col2 = reader->read_col_int32(2);
-    num_rows = col0.size();
+    for (size_t i = 0; i < num_cols; ++i) {
+      cols[i] = reader->read_col_int32<uint32_t>(i);
+    }
+    num_rows = cols[0].size();
     return 0.0;
   });
 
@@ -240,22 +208,23 @@ void sort_stitch_all() {
       utils::Timer timer;
       time_stitching = time_sorting = time_grouping = 0;
 
-      stitch::StitchingSorterOperator<4 * 3> r(num_rows, idx,
-                                               std::move(grouping));
+      auto r = stitch::createStitchingSorterOperator(4 * num_cols);
+      r->init(num_rows, &idx, std::move(grouping));
+
       timer.start();
-      r.setData(col0);
-      r.setData(col1);
-      r.setData(col2);
+      for (size_t col_idx = 0; col_idx < num_cols; ++col_idx) {
+        r->setData(cols[col_idx]);
+      }
       timer.stop();
       time_stitching += timer.get_ms();
 
       timer.start();
-      r.sort();
+      r->sort();
       timer.stop();
       time_sorting += timer.get_ms();
 
       timer.start();
-      grouping = r.grouping();
+      grouping = r->grouping();
       timer.stop();
       time_grouping += timer.get_ms();
     }
@@ -278,22 +247,21 @@ void sort_stitch_all() {
       auto x = idx[i - 1];
       auto y = idx[i];
 
-      if (col0[x] != col0[y]) {
-        CHECK_LT(col0[x], col0[y])
-            << "i: " << i << ", x: " << x << ", y: " << y;
-      } else if (col1[x] != col1[y]) {
-        CHECK_LT(col1[x], col1[y])
-            << "i: " << i << ", x: " << x << ", y: " << y;
-      } else {
-        CHECK_LE(col2[x], col2[y])
-            << "i: " << i << ", x: " << x << ", y: " << y;
+      for (size_t col_idx = 0; col_idx < num_cols; ++col_idx) {
+        if (cols[col_idx][x] != cols[col_idx][y]) {
+          CHECK_LT(cols[col_idx][x], cols[col_idx][y])
+              << "i: " << i << ", x: " << x << ", y: " << y;
+          break;
+        }
       }
     }
     // std::cout << "Sorting is correct" << std::endl;
     LOG(INFO) << "Sorting is correct";
   }
-  if (std_dev / avg > FLAGS_std_dev_lmt) {
-    LOG(ERROR) << "Standard deviation is too high: " << std_dev;
+
+  auto rate = std_dev / avg;
+  if (rate > FLAGS_std_dev_lmt) {
+    LOG(ERROR) << "Standard deviation is too high: " << rate;
     exit(1);
   }
 }
@@ -309,20 +277,22 @@ int main(int argc, char *argv[]) {
 
   // Use the input_file flag
   std::string input_file = FLAGS_input_file;
+  size_t num_cols = FLAGS_num_cols;
+
   std::cout << "# input_file: " << input_file << std::endl;
 
   bool run_all = !FLAGS_std && !FLAGS_o_by_o && !FLAGS_stitching_all;
 
   if (FLAGS_std || run_all) {
-    sort_std();
+    sort_std(num_cols);
   }
 
   if (FLAGS_o_by_o || run_all) {
-    sort_1by1();
+    sort_1by1(num_cols);
   }
 
   if (FLAGS_stitching_all || run_all) {
-    sort_stitch_all();
+    sort_stitch_all(num_cols);
   }
 
   gflags::ShutDownCommandLineFlags();

@@ -68,39 +68,45 @@ private:
   ValueT *data_;
 };
 
-template <size_t WIDTH> class StitchingSorterOperator {
+class StitchingSorterOperator {
 public:
-  StitchingSorterOperator(size_t num_rows, std::vector<size_t> &idx,
-                          std::vector<std::pair<size_t, size_t>> last_grouping)
-      : num_rows_(num_rows), idx_(idx),
-        last_grouping_(std::move(last_grouping)) {
-    data_.resize(num_rows_);
+  StitchingSorterOperator() {}
+
+  virtual ~StitchingSorterOperator() {}
+
+  virtual void init(size_t num_rows, std::vector<size_t> *idx,
+                    std::vector<std::pair<size_t, size_t>> last_grouping) {
+    num_rows_ = num_rows;
+    idx_ = idx;
+    last_grouping_ = std::move(last_grouping);
   }
 
-  template <typename T> void setData(const std::vector<T> &a) {
-    static_assert(std::endian::native == std::endian::little);
-    static_assert(sizeof(T) == 4);
-    CHECK_EQ(a.size(), num_rows_);
-    CHECK_GE(WIDTH - filled_width_, sizeof(T));
+  virtual void setData(const std::vector<uint32_t> &a) = 0;
 
-    if (filled_width_ == 0) {
-      for (auto [l, r] : last_grouping_) {
-        for (size_t i = l; i < r; i++) {
-          data_[i].idx = idx_[i];
-        }
-      }
-    }
+  virtual void sort() = 0;
 
-    for (auto [l, r] : last_grouping_) {
-      for (size_t i = l; i < r; i++) {
-        *(reinterpret_cast<T *>(data_[i].v + filled_width_)) =
-            BIG_LITTLE_SWAP32(a[idx_[i]]);
-      }
-    }
-    filled_width_ += sizeof(T);
+  virtual std::vector<std::pair<size_t, size_t>> grouping() = 0;
+
+protected:
+  size_t num_rows_;
+  std::vector<size_t> *idx_;
+  std::vector<std::pair<size_t, size_t>> last_grouping_;
+};
+
+template <size_t WIDTH>
+class StitchingSorterOperatorImpl : public StitchingSorterOperator {
+public:
+  StitchingSorterOperatorImpl() {}
+
+  void init(size_t num_rows, std::vector<size_t> *idx,
+            std::vector<std::pair<size_t, size_t>> last_grouping) override {
+    StitchingSorterOperator::init(num_rows, idx, last_grouping);
+    data_.resize(num_rows);
   }
 
-  void sort() {
+  void setData(const std::vector<uint32_t> &a) override { setDataImpl(a); }
+
+  void sort() override {
     CHECK_EQ(filled_width_, WIDTH);
     sorters_.reserve(last_grouping_.size());
     for (auto [l, r] : last_grouping_) {
@@ -110,23 +116,59 @@ public:
     }
   }
 
-  auto grouping() {
+  std::vector<std::pair<size_t, size_t>> grouping() override {
     std::vector<std::pair<size_t, size_t>> new_grouping;
     new_grouping.reserve(sorters_.size() * 2);
     for (auto &[l, s] : sorters_) {
-      s.grouping(&new_grouping, &idx_[l], l);
+      s.grouping(&new_grouping, &(*idx_)[l], l);
     }
     return new_grouping;
   }
 
 private:
-  size_t num_rows_;
-  std::vector<size_t> &idx_;
-  std::vector<std::pair<size_t, size_t>> last_grouping_;
+  template <typename T> void setDataImpl(const std::vector<T> &a) {
+    static_assert(std::endian::native == std::endian::little);
+    static_assert(sizeof(T) == 4);
+    CHECK_EQ(a.size(), num_rows_);
+    CHECK_GE(WIDTH - filled_width_, sizeof(T));
+
+    if (filled_width_ == 0) {
+      for (auto [l, r] : last_grouping_) {
+        for (size_t i = l; i < r; i++) {
+          data_[i].idx = (*idx_)[i];
+        }
+      }
+    }
+
+    for (auto [l, r] : last_grouping_) {
+      for (size_t i = l; i < r; i++) {
+        *(reinterpret_cast<T *>(data_[i].v + filled_width_)) =
+            BIG_LITTLE_SWAP32(a[(*idx_)[i]]);
+      }
+    }
+    filled_width_ += sizeof(T);
+  }
 
   std::vector<StitchingT<WIDTH>> data_;
   size_t filled_width_{0};
   std::vector<std::pair<size_t, StitchingSorter<WIDTH>>> sorters_;
 };
+
+inline std::unique_ptr<StitchingSorterOperator>
+createStitchingSorterOperator(size_t width) {
+  const auto kMaxWidth = 32;
+  auto GeneJ = []<size_t... M>(std::index_sequence<M...>) constexpr {
+    return std::array<std::function<std::unique_ptr<StitchingSorterOperator>()>,
+                      sizeof...(M)>{
+        []() { return std::make_unique<StitchingSorterOperatorImpl<M>>(); }...};
+  };
+  const auto create_array = GeneJ(std::make_index_sequence<kMaxWidth>{});
+
+  if (width < kMaxWidth) {
+    return create_array[width]();
+  }
+  DLOG(FATAL) << "Unsupported width: " << width;
+  return nullptr;
+}
 
 } // namespace whippet_sort::stitch
