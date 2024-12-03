@@ -49,15 +49,14 @@ std::vector<size_t> sort_std(int num_cols) {
   size_t num_rows;
   std::vector<std::vector<uint32_t>> cols;
   cols.resize(num_cols);
-
-  helper.add_step("read", [&]() {
+  {
     auto reader = std::make_unique<ParquetReaderVec>(FLAGS_input_file);
     for (size_t i = 0; i < num_cols; ++i) {
       cols[i] = reader->read_col_int32<uint32_t>(i);
     }
     num_rows = cols[0].size();
-    return 0.0;
-  });
+  }
+  // helper.add_step("read", [&]());
 
   std::vector<size_t> idx;
   helper.add_step("sort", [&]() {
@@ -97,23 +96,28 @@ void sort_1by1(int num_cols) {
   std::vector<std::vector<uint32_t>> cols;
   cols.resize(num_cols);
 
-  helper.add_step("read", [&]() {
+  {
     auto reader = std::make_unique<ParquetReaderVec>(FLAGS_input_file);
     for (size_t i = 0; i < num_cols; ++i) {
       cols[i] = reader->read_col_int32<uint32_t>(i);
     }
     num_rows = cols[0].size();
-    return 0.0;
-  });
+  }
+
+  // helper.add_step("read", [&]() { return 0.0; });
 
   std::vector<size_t> idx;
   int time_stitching = 0;
   int time_sorting = 0;
   int time_grouping = 0;
+  double early_stop_rete = 0;
 
   helper.add_step("stitching", [&]() {
     utils::Timer timer;
     time_stitching = time_sorting = time_grouping = 0;
+
+    size_t valid_sort_cnt = 0;
+    early_stop_rete = 0;
 
     timer.start();
     idx.resize(num_rows);
@@ -125,6 +129,7 @@ void sort_1by1(int num_cols) {
     for (size_t col_idx = 0; col_idx < num_cols; ++col_idx) {
       auto r = stitch::createStitchingSorterOperator(4);
       r->init(num_rows, &idx, std::move(grouping));
+      valid_sort_cnt += r->valid_rows();
 
       timer.start();
       r->setData(cols[col_idx]);
@@ -141,6 +146,10 @@ void sort_1by1(int num_cols) {
       timer.stop();
       time_grouping += timer.get_ms();
     }
+
+    early_stop_rete =
+        1.0 - static_cast<double>(valid_sort_cnt) / (num_rows * num_cols);
+
     return time_stitching;
   });
   helper.add_step("sorting", [&]() { return time_sorting; });
@@ -152,7 +161,8 @@ void sort_1by1(int num_cols) {
   std::cout << helper.get_detail_json();
   auto [avg, mid, std_dev] = helper.get_tot_statics();
   std::cout << "# 1by1 sorting - Median: " << mid << "ms, Average: " << mid
-            << "ms, std_dev: " << std_dev << std::endl;
+            << "ms, std_dev: " << std_dev
+            << ",  early_stop_rate: " << early_stop_rete << std::endl;
 
   if (FLAGS_debug) {
     for (size_t i = 1; i < num_rows; i++) {
@@ -184,15 +194,14 @@ void sort_stitch_all(int num_cols) {
   size_t num_rows;
   std::vector<std::vector<uint32_t>> cols;
   cols.resize(num_cols);
-
-  helper.add_step("read", [&]() {
+  {
     auto reader = std::make_unique<ParquetReaderVec>(FLAGS_input_file);
     for (size_t i = 0; i < num_cols; ++i) {
       cols[i] = reader->read_col_int32<uint32_t>(i);
     }
     num_rows = cols[0].size();
-    return 0.0;
-  });
+  }
+  // helper.add_step("read", [&]() );
 
   std::vector<size_t> idx;
   int time_stitching = 0;
@@ -279,7 +288,8 @@ int main(int argc, char *argv[]) {
   std::string input_file = FLAGS_input_file;
   size_t num_cols = FLAGS_num_cols;
 
-  std::cout << "# input_file: " << input_file << std::endl;
+  std::cout << "# input_file: " << input_file << ", num_cols: " << num_cols
+            << std::endl;
 
   bool run_all = !FLAGS_std && !FLAGS_o_by_o && !FLAGS_stitching_all;
 

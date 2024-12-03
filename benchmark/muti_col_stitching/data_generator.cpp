@@ -16,7 +16,7 @@
 #include <thread>
 
 DEFINE_string(n_rows, "20", "Number of rows (can be in scientific notation)");
-// DEFINE_int32(str_len_avg, 150, "Average length of strings");
+DEFINE_int32(value_range_2pow, 10, "Range of values, 2^x");
 DEFINE_int32(data_type, 1, "Type of data to generate");
 DEFINE_int32(seed, 0, "random seed");
 DEFINE_bool(debug, false, "debug mode");
@@ -30,20 +30,37 @@ size_t scientific_to_int(const std::string &s) {
   return static_cast<size_t>(std::stod(s));
 }
 
-arrow::Result<std::shared_ptr<arrow::Array>> generate_rnd_int_array(size_t n,
-                                                                    int range) {
+arrow::Result<std::shared_ptr<arrow::Array>>
+generate_rnd_int_array(size_t n, int range, bool discretization = false) {
+  std::vector<int> discrete_values;
+  if (discretization) {
+    std::mt19937 gen((rd() + range) ^ FLAGS_seed);
+    std::uniform_int_distribution<> dis(0, std::numeric_limits<int>::max());
+    for (int i = 0; i <= range; ++i) {
+      auto v = dis(gen);
+      while (std::find(discrete_values.begin(), discrete_values.end(), v) !=
+             discrete_values.end())
+        v = dis(gen);
+      discrete_values.push_back(v);
+    }
+  }
   std::vector<std::thread> threads;
   auto num_threads = std::min<size_t>(kNumThreads, n / 1e5 + 1);
   std::vector<int> result(n);
-
   for (int t = 0; t < num_threads; ++t) {
     threads.emplace_back([&, t]() {
       std::mt19937 gen((rd() + t) ^ FLAGS_seed);
       std::uniform_int_distribution<> local_length_distribution(0, range);
       size_t start = t * n / num_threads;
       size_t end = (t + 1) * n / num_threads;
-      for (size_t i = start; i < end; ++i) {
-        result[i] = local_length_distribution(gen);
+      if (discretization) {
+        for (size_t i = start; i < end; ++i) {
+          result[i] = discrete_values[local_length_distribution(gen)];
+        }
+      } else {
+        for (size_t i = start; i < end; ++i) {
+          result[i] = local_length_distribution(gen);
+        }
       }
     });
   }
@@ -62,15 +79,17 @@ arrow::Result<std::shared_ptr<arrow::Array>> generate_rnd_int_array(size_t n,
   return array;
 }
 
-std::shared_ptr<arrow::Table> gen_type1(size_t n) {
-  const int range = 1 << 10;
+std::shared_ptr<arrow::Table> gen_type1or2(size_t n, int range_2pow,
+                                           bool discretization) {
+  const int range = 1 << range_2pow;
   const int num_cols = 5;
 
   std::vector<std::shared_ptr<arrow::Array>> columns(num_cols);
   std::vector<std::thread> threads;
   for (auto &col : columns) {
-    threads.emplace_back(
-        [&]() { col = generate_rnd_int_array(n, range).ValueOrDie(); });
+    threads.emplace_back([&]() {
+      col = generate_rnd_int_array(n, range, discretization).ValueOrDie();
+    });
   }
   for (auto &thread : threads) {
     thread.join();
@@ -99,9 +118,12 @@ int main(int argc, char **argv) {
   auto n = scientific_to_int(FLAGS_n_rows);
 
   std::shared_ptr<arrow::Table> table;
-  if (FLAGS_data_type == 1)
-    table = gen_type1(n);
-  else {
+  if (FLAGS_data_type == 1) {
+    table = gen_type1or2(n, FLAGS_value_range_2pow, false);
+  } else if (FLAGS_data_type == 2) {
+    table =
+        gen_type1or2(n, FLAGS_value_range_2pow, FLAGS_value_range_2pow < 20);
+  } else {
     CHECK(false) << "Not implemented";
   }
   if (!table)
@@ -111,9 +133,9 @@ int main(int argc, char **argv) {
   std::shared_ptr<arrow::io::FileOutputStream> outfile;
   auto out_path =
       // std::string(PROJECT_SOURCE_DIR) +"/data/"
-      "/data/parquet_sorting/" + fmt::format("int32-ty{}-{}-sed{}.parquet",
-                                             FLAGS_data_type, FLAGS_n_rows,
-                                             FLAGS_seed);
+      "/data/parquet_sorting/" +
+      fmt::format("int32-ty{}-{}-v{}-sed{}.parquet", FLAGS_data_type,
+                  FLAGS_n_rows, FLAGS_value_range_2pow, FLAGS_seed);
   PARQUET_ASSIGN_OR_THROW(outfile, arrow::io::FileOutputStream::Open(out_path));
 
   const auto arrow_properties =

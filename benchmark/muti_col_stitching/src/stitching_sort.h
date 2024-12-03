@@ -79,6 +79,11 @@ public:
     num_rows_ = num_rows;
     idx_ = idx;
     last_grouping_ = std::move(last_grouping);
+    valid_rows_ = 0;
+    for (auto [l, r] : last_grouping_) {
+      valid_rows_ += r - l;
+      CHECK(l < r);
+    }
   }
 
   virtual void setData(const std::vector<uint32_t> &a) = 0;
@@ -87,8 +92,10 @@ public:
 
   virtual std::vector<std::pair<size_t, size_t>> grouping() = 0;
 
+  auto valid_rows() const { return valid_rows_; }
+
 protected:
-  size_t num_rows_;
+  size_t num_rows_, valid_rows_;
   std::vector<size_t> *idx_;
   std::vector<std::pair<size_t, size_t>> last_grouping_;
 };

@@ -17,10 +17,15 @@ import threading
 benchmark_dir = f"./log/{time.strftime('%m%d_%H%M%S')}/"
 os.makedirs(benchmark_dir)
 
-# ============ benchmar args ============
-row_sizes = ["2e6", "2e7", "2e8", "2e9"]
+# ============ All Benchmar Args ============
+data_seeds = ["0", "19260817", "114514", "1919810"]
+row_sizes = ["2e7", "2e8", "2e9"]
+value_ranges = [3, 7, 10, 30]
 method_args = ["std", "o_by_o", "stitching_all"]
-num_cols_list = [3, 4, 5]
+num_cols_list = [1, 2, 3, 4, 5]
+# ============ Current Args ============
+method_args = ["o_by_o", "stitching_all"]
+value_ranges = [7]
 # =======================================
 
 log_file = f"{benchmark_dir}/benchmark.log"
@@ -32,6 +37,17 @@ running_benchmark = f"{benchmark_dir}/benchmark_running"
 
 
 lock = threading.Lock()
+
+
+def ensure_memory():
+    # Ensure enough memory
+    total_memory = psutil.virtual_memory().total
+    avaliable_memory = psutil.virtual_memory().available
+    rate = avaliable_memory / total_memory
+    if rate < 0.2:
+        print(f"Memory is not enough, {1.0-rate} is using")
+        return False
+    return True
 
 
 def get_a_bind_id_func():
@@ -46,6 +62,8 @@ def get_a_bind_id_func():
     """
     lock.acquire()
     threshold = 10
+    while ensure_memory() == False:
+        time.sleep(5)
     while True:
         cpu_percentages = psutil.cpu_percent(percpu=True, interval=0.1)
         idle_cores = []
@@ -119,17 +137,17 @@ def run_benchmark(data_path, num_col, method):
         return None
 
 
-def run_benchmark_and_draw(data_name, num_cols_list=[3, 4, 5], seeds=["0"]):
+def run_benchmark_and_draw(data_name, value_range, num_cols_list=[3, 4, 5], seeds=["0"]):
     step_time_avgs = dict()
 
-    with ThreadPoolExecutor(max_workers=16) as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         tasks = dict()
         for method in method_args:
             tasks[method] = dict()
             for num_col in num_cols_list:
                 tasks[method][num_col] = dict()
                 for seed in seeds:
-                    data_path = f"/data/parquet_sorting/int32-ty1-{data_name}-sed{seed}.parquet"
+                    data_path = f"/data/parquet_sorting/int32-ty2-{data_name}-v{value_range}-sed{seed}.parquet"
                     tasks[method][num_col][seed] = executor.submit(
                         run_benchmark, data_path, num_col, method)
                     time.sleep(0.5)
@@ -157,12 +175,13 @@ def run_benchmark_and_draw(data_name, num_cols_list=[3, 4, 5], seeds=["0"]):
                     step_time_avgs[num_col][method][step] = sum(t) / len(t)
 
     # Draw figures
-    fig, axs = plt.subplots(1, len(num_cols_list),
-                            figsize=(15, 5), sharey=True)
-    if len(num_cols_list) == 1:
+    fig_num = len(num_cols_list)
+    fig, axs = plt.subplots(1, fig_num,
+                            figsize=(fig_num*4, 5), sharey=True)
+    if fig_num == 1:
         axs = [axs]  # Convert single axis to list for consistency
     for i, num_col in enumerate(num_cols_list):
-        title_str = f"{data_name}-col{num_col}"
+        title_str = f"{data_name}-v{value_range}-col{num_col}"
         step_time_avg = step_time_avgs[num_col]
 
         # 提取方法名称
@@ -222,8 +241,8 @@ def run_benchmark_and_draw(data_name, num_cols_list=[3, 4, 5], seeds=["0"]):
 
     # 显示图形
     plt.tight_layout()
-    plt.savefig(f'{benchmark_dir}/output-{data_name}-combined.png')
-    print(f'image {benchmark_dir}/output-{data_name}-combined.png saved')
+    plt.savefig(f'{benchmark_dir}/output-{data_name}-v{value_range}.png')
+    print(f'image {benchmark_dir}/output-{data_name}-v{value_range}.png saved')
     # plt.show()
     return step_time_avgs
 
@@ -240,15 +259,20 @@ def main():
             print("Exiting the program.")
             exit(0)
 
-    shutil.copy2("./draw.py", f"{benchmark_dir}/draw.py")
+    current_scr_name = os.path.basename(__file__)
+    current_scr_path = os.path.relpath(__file__)
+    shutil.copy2(f"./{current_scr_path}",
+                 f"{benchmark_dir}/{current_scr_name}")
 
     results = dict()
 
     for row_num in row_sizes:
-        results[row_num] = run_benchmark_and_draw(f"{row_num}", num_cols_list, [
-                                                  "0", "19260817", "114514", "1919810"])
-        with open(data_json_file, 'w') as f:
-            f.write(json.dumps(results) + '\n')
+        results[row_num] = dict()
+        for value_range in value_ranges:
+            results[row_num][value_range] = run_benchmark_and_draw(
+                f"{row_num}", value_range, num_cols_list, data_seeds)
+            with open(data_json_file, 'w') as f:
+                f.write(json.dumps(results) + '\n')
 
     print("All benchmarks are done.")
     print("========================")
